@@ -20,5 +20,3 @@ def length_activities(active_ride):
     active_ride[active_ride.columns[4]] = pd.to_datetime(active_ride.iloc[:,4], format = "%H:%M:%S")
     active_ride["diff"] = active_ride[active_ride.columns[4]] - active_ride[active_ride.columns[3]]
     return active_ride
-
-#piemel
