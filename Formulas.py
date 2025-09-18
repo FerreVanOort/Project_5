@@ -42,5 +42,5 @@ def charging_check(active_ride):
         st.error("Charging rates have positive value")
         # print(errors) #Streamlit iets van maken
         
-def charting_data(active_ride):
+# def charting_data(active_ride):
     
