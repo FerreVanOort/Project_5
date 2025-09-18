@@ -33,3 +33,14 @@ def check_format_excel(active_ride:pd.Dataframe):
     if not true_amount:
         st.error("The uploaded file does not have the right format")
         
+def charging_check(active_ride):
+    errors = active_ride[(active_ride['activity'] == 'charging') & (active_ride['energy_consumption'] >= 0)]
+
+    if errors.empty:
+        st.success("Charging rates are correct")
+    else:
+        st.error("Charging rates have positive value")
+        # print(errors) #Streamlit iets van maken
+        
+def charting_data(active_ride):
+    
