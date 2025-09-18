@@ -21,3 +21,4 @@ def length_activities(active_ride):
     active_ride["diff"] = active_ride[active_ride.columns[4]] - active_ride[active_ride.columns[3]]
     return active_ride
 
+#piemel
