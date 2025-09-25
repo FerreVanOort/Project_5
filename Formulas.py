@@ -76,3 +76,43 @@ def length_activities(planning:pd.DataFrame) -> pd.DataFrame:
     planning["diff"] = planning[planning.columns[4]] - planning[planning.columns[3]]
     return planning
 
+def charge_time(planning:pd.DataFrame):
+    """
+    Input:
+        Bus planning as a Pandas DataFrame
+
+    Returns:
+        Success or error message depending on sufficient charging
+    """
+    # Gathers all charging moments in planning
+    charging_moments = planning[planning.iloc[:,5].str.contains("charging")]
+    
+    # Checks if charge time is longer than given minimum
+    short_charge = charging_moments[charging_moments['diff'] < pd.Timedelta(minutes = 15)]
+    
+    # Success or error dependent on if there are any errors
+    if len(short_charge) > 0:
+        st.error(f"There are {len(short_charge)} times a bus is charged too short")
+        with st.expander("More information on charging times"):
+            st.write("Insufficient charge time")
+            short_charge = short_charge[["start_time", "end_time", "activity"]]
+            st.write(pd.DataFrame(short_charge))
+    else:
+        st.success("All buses have sufficient charging times")
+        
+def convert_to_time(value):
+    """
+    Input:
+        Time value from any given columns
+        
+    Returns:
+        Converted time value to datetime.time-object
+    """
+    # Checks if value is already in correct format
+    if isinstance(value, datetime.time):
+        return value
+    try:
+        return pd.to_datetime(value, format = '%H:%M').time()
+    except ValueError:
+        return pd.to_datetime(value, format = '%H:%M:%S').time()
+    
