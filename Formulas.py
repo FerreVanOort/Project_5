@@ -116,3 +116,24 @@ def convert_to_time(value):
     except ValueError:
         return pd.to_datetime(value, format = '%H:%M:%S').time()
     
+def create_gannt_chart(planning:pd.DataFrame):
+    """
+    Input:
+        Bus planning as a Pandas DataFrame
+
+    Returns:
+        Gannt chart of given bus planning
+    """
+    planning["start_time"] = pd.to_datetime(planning["start_time"])
+    planning["end_time"] = pd.to_datetime(planning["end_time"])
+    fig = px.timeline(planning, x_start = "start_time", x_end = "end_time", y = "Loop", color = "activity")
+    fig.update_yaxes(tickmode = 'linear', tick0 = 1, dtick = 1, autorange = 'reversed', showgrid = True, gridcolor = 'w', gridwidth = 1)
+    fig.update_xaxes(tickformat = '%H:%M', showgrid = True, gridcolor = 'w', gridwidth = 1)
+    fig.update_layout(title = dict(text = 'Gantt chart of the given bus planning', font = dict(size = 30)))
+    fig.update_layout(legend = dict(
+    yanchor = 'bottom',
+    y = 0.01,
+    xanchor = 'right',
+    x= 1.23
+    ))
+    return st.plotly_chart(fig)
