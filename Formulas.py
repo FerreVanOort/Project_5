@@ -8,39 +8,71 @@ import scipy.stats as sp
 import datetime
 import plotly.express as px
 
+
 # Functions
 
-def amount_of_busses(planning):
-    planning = pd.DataFrame(planning)
-    busses = planning[planning.columns[len(planning.columns) - 1]].unique()
-    return busses
+def cleanup_excel(planning:pd.Dataframe) -> pd.DataFrame:
+    """
+    Input:
+        Bus planning as a Pandas Dataframe
 
-def length_activities(active_ride):
-    active_ride[active_ride.columns[3]] = pd.to_datetime(active_ride.iloc[:,3], format = "%H:%M:%S")
-    active_ride[active_ride.columns[4]] = pd.to_datetime(active_ride.iloc[:,4], format = "%H:%M:%S")
-    active_ride["diff"] = active_ride[active_ride.columns[4]] - active_ride[active_ride.columns[3]]
-    return active_ride
+    Returns:
+        Cleaned up bus planning as a Pandas DataFrame
+    """
+    # Replace spaces with underscores for easier coding
+    planning.columns = planning.columns.str.replace(" ", "_")
+    # Replaces all upper case letters with lower case ones
+    planning.columns = planning.columns.str.lower()
+    return planning
 
-def cleanup_excel(active_ride:pd.Dataframe):
-    active_ride.columns = active_ride.columns.str.replace(" ", "_")
-    return active_ride
-
-def check_format_excel(active_ride:pd.Dataframe):
-    items = list(active_ride.columns)
+def check_format_excel(planning:pd.Dataframe):
+    """
+    Input:
+        Bus planning as a Pandas DataFrame
+        
+    Returns:
+        Success or fail message depending on if the format is correct
+    """
+    # Puts all columns names in a list
+    items = list(planning.columns)
+    # Checks if all columns names align with the needed input
     true_amount = items == ['start_location', 'end_location', 'start_time', 'end_time', 'activity', 'line', 'energy_consumption', 'bus']
+    # Success or fail message dependent on true_amount
     if true_amount:
         st.success("The uploaded file has the right format")
     if not true_amount:
         st.error("The uploaded file does not have the right format")
         
-def charging_check(active_ride):
-    errors = active_ride[(active_ride['activity'] == 'charging') & (active_ride['energy_consumption'] >= 0)]
-
+def charging_check(planning:pd.DataFrame):
+    """
+    Input:
+        Bus planning as a Pandas DataFrame
+        
+    Returns:
+        Success or fail message depending on correct charging rates
+    """
+    # Filters all errors
+    errors = planning[(planning['activity'] == 'charging') & (planning['energy_consumption'] >= 0)]
+    # Success or error dependent on if there are any errors
     if errors.empty:
         st.success("Charging rates are correct")
     else:
         st.error("Charging rates have positive value")
-        # print(errors) #Streamlit iets van maken
+        st.subheader("Error lines:")
+        st.dataframe(errors, use_container_width = True)
         
-# def charting_data(active_ride):
-    
+def length_activities(planning:pd.DataFrame) -> pd.DataFrame:
+    """
+    Input:
+        Bus planning as a Pandas Dataframe
+
+    Returns:
+        Bus planning as a Pandas DataFrame with an extra row with duration of activities
+    """
+    # Puts planning columns in similar datetime format
+    planning[planning.columns[3]] = pd.to_datetime(planning.iloc[:,3], format = "%H:%M:%S")
+    planning[planning.columns[4]] = pd.to_datetime(planning.iloc[:,4], format = "%H:%M:%S")
+    # Adds new column to DataFrame
+    planning["diff"] = planning[planning.columns[4]] - planning[planning.columns[3]]
+    return planning
+
