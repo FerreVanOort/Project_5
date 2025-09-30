@@ -6,12 +6,13 @@ import numpy as np
 import streamlit as st
 import scipy.stats as sp
 import datetime
+from datetime import time
 import plotly.express as px
 
 
 # Functions
 
-def cleanup_excel(planning:pd.Dataframe) -> pd.DataFrame:
+def cleanup_excel(planning:pd.DataFrame) -> pd.DataFrame:
     """
     Input:
         Bus planning as a Pandas Dataframe
@@ -25,7 +26,7 @@ def cleanup_excel(planning:pd.Dataframe) -> pd.DataFrame:
     planning.columns = planning.columns.str.lower()
     return planning
 
-def check_format_excel(planning:pd.Dataframe):
+def check_format_excel(planning:pd.DataFrame):
     """
     Input:
         Bus planning as a Pandas DataFrame
@@ -81,7 +82,7 @@ def charge_time(planning:pd.DataFrame):
     Input:
         Bus planning as a Pandas DataFrame
 
-    Returns:
+    Output:
         Success or error message depending on sufficient charging
     """
     # Gathers all charging moments in planning
@@ -102,19 +103,28 @@ def charge_time(planning:pd.DataFrame):
         
 def convert_to_time(value):
     """
+    Turns a time value into a datetime.time-object.
+    
     Input:
-        Time value from any given columns
+        Time as a string (for example '08:30' or '08:30:00'), or already a datetime.time object.
         
-    Returns:
-        Converted time value to datetime.time-object
+    Output:
+        datetime.time object
     """
-    # Checks if value is already in correct format
-    if isinstance(value, datetime.time):
+    if isinstance(value, time):
         return value
-    try:
-        return pd.to_datetime(value, format = '%H:%M').time()
-    except ValueError:
-        return pd.to_datetime(value, format = '%H:%M:%S').time()
+    
+    if pd.isnull(value):
+        raise ValueError("Null tijdwaarde aangetroffen")
+    
+    # Tries standard formats in order
+    for fmt in ("%H:%M", "%H:%M:%S"):
+        try:
+            return pd.to_datetime(value, format=fmt).time()
+        except (ValueError, TypeError):
+            continue
+    
+    raise ValueError(f"Tijdformaat niet herkend: {value}")
     
 def create_gannt_chart(planning:pd.DataFrame):
     """
@@ -137,3 +147,146 @@ def create_gannt_chart(planning:pd.DataFrame):
     x= 1.23
     ))
     return st.plotly_chart(fig)
+
+def ensure_time_column(df : pd.DataFrame , column):
+    """
+    Uses the convert_to_time function
+
+    Input:
+        Pandas DataFrame
+
+    Output:
+        Pandas DataFrame with changed datetime columns
+    """
+    df[column] = df[column].apply(convert_to_time)
+
+def check_timetable(timetable, planning):
+    """
+    Checks if all rides in Timetable are covered by the BusPlanning
+
+    Input:
+        Timetable and Bus Planning as Pandas DataFrames
+
+    Output:
+        Success or error statement dependent on ride coverage
+    """
+
+    # Makes sure all time columns are parsed
+    ensure_time_column(timetable, 'departure_time')
+    ensure_time_column(planning, 'start_time')
+    ensure_time_column(planning, 'end_time')
+
+    # Find rides not covered in planning
+    unassigned_rides = []
+
+    for _, ride in timetable.iterrows():
+        matching = planning[
+            (planning['bus'] == ride['line']) &
+            (planning['start_location'] == ride['start']) &
+            (planning['end_location'] == ride['end'])
+        ]
+
+        # Checks for a match in departure time
+        is_covered = any(matching['start_time'] == ride['departure_time'])
+
+        if not is_covered:
+            unassigned_rides.append(ride)
+
+    # Show result in Streamlit
+    num_uncovered = len(unassigned_rides)
+
+    if num_uncovered > 0:
+        st.error(f"⚠️ There {'is' if num_uncovered == 1 else 'are'} {num_uncovered} ride{'s' if num_uncovered > 1 else ''} not being driven.")
+        with st.expander("Click for more information on these rides"):
+            st.write("The following rides are unassigned with the given Bus Planning:")
+            st.write(pd.DataFrame(unassigned_rides))
+    else:
+        st.success("All rides are covered!")
+
+def check_ride_duration(planning, distancematrix):
+    """
+    Checks if rides in the planning are within the allowed time alloted
+
+    Input:
+        Bus Planning and Distance Matrix as Pandas DataFrames
+
+    Output:
+        Success or error statement dependent on the rides being within the alloted time
+    """
+
+    # Find rides that take too long
+    overlong_rides =[]
+
+    ensure_time_column(planning, 'start_time')
+    ensure_time_column(planning, 'end_time')
+
+    for _, ride in planning.iterrows():
+        start = ride["start_time"]
+        end = ride["end_time"]
+        start_loc = ride["start_location"]
+        end_loc = ride["end_location"]
+
+        if start is None or end is None:
+            continue
+
+        actual_duration = (datetime.combine(datetime.today(), end) - datetime.combine(datetime.today(), start)).total_seconds() / 60
+
+        match = distancematrix[(distancematrix['start'] == start_loc) & (distancematrix['end'] == end_loc)]
+
+        if match.empty:
+            continue
+
+        max_time = match['max_travel_time'].values[0]
+
+        if actual_duration > max_time:
+            overlong_rides.append({
+                'start_location': start_loc,
+                'end_location': end_loc,
+                'start_time': start,
+                'end_time': end,
+                'actual_duration': actual_duration,
+                'max_travel_time': max_time
+            })
+
+    overlong =  pd.DataFrame(overlong_rides)
+
+    if not overlong.empty:
+        st.error(f"There are {len(overlong)} rides outside the allowed travel time")
+        with st.expander("Click for more details"):
+            st.write(overlong)
+    else:
+        st.success("All rides are within the allowed timeframe!")
+
+
+def main(timetable, planning, distancematrix):
+    """
+    Does all necessary checks in Streamlit
+
+    Input:
+        Timetable, Bus Planning, and Distance matrix as Pandas DataFrames
+
+    Output:
+        Shows all checks in Streamlit
+    """
+
+    st.title("Bus Planning Control Center")
+
+    st.header("Cleanup & Format Check")
+    planning_clean = cleanup_excel(planning)
+    check_format_excel(planning_clean)
+
+    st.header("Length of Activities")
+    planning_with_length = length_activities(planning_clean)
+
+    st.header("Charging Check")
+    charging_check(planning_clean)
+    charge_time(planning_clean)
+
+    st.header("Check Dienstregeling Coverage")
+    check_timetable(timetable, planning_clean)
+
+    st.header("Check Ride Duration vs Distance Matrix")
+    check_ride_duration(planning_clean, distancematrix)
+    
+    st.header("Gantt Chart of Bus Planning")
+    create_gannt_chart(planning_with_length)
