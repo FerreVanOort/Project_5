@@ -258,6 +258,9 @@ def check_ride_duration(planning, distancematrix):
         st.success("All rides are within the allowed timeframe!")
 
 
+
+
+
 def main(timetable, planning, distancematrix):
     """
     Does all necessary checks in Streamlit
