@@ -181,7 +181,7 @@ def check_timetable(timetable, planning):
 
     for _, ride in timetable.iterrows():
         matching = planning[
-            (planning['bus'] == ride['line']) &
+            (planning['line'] == ride['line']) &
             (planning['start_location'] == ride['start']) &
             (planning['end_location'] == ride['end'])
         ]
@@ -259,6 +259,82 @@ def check_ride_duration(planning, distancematrix):
     else:
         st.success("All rides are within the allowed timeframe!")
 
+def SOC_periods(planning: pd.DataFrame) -> pd.DataFrame:
+    """
+    Find periods in which a bus is below the minimum SOC
+
+    Input:
+        Bus Planning as a Pandas Dataframe
+
+    Output:
+        Bus Planning with period/interval column added as a Pandas DataFrame
+    """
+
+    dataf = planning.copy()
+    dataf = dataf.sort_values(['bus', 'start_time']).reset_index(drop = True)
+
+    shifted_end = dataf['end_time'].shift(1)
+    new_period = (dataf['start_time'] != shifted_end) | (dataf['bus'] != dataf['bus'].shift(1))
+    dataf['period_id'] = new_period.cumsum()
+
+    result = dataf.groupby('period_id').agg({
+        'bus' : 'first',
+        'start_time' : 'first',
+        'end_time' : 'last'
+    }).reset_index(drop = True)
+    return result
+
+def SOC_check(planning: pd.DataFrame, SOH, minbat, startbat):
+    """
+    Checks if the SOC gets below minimal value
+
+    Input:
+        Bus Planning as a Pandas DataFrame,
+        the SOH of the battery in % (filled in as a float, e.g. 90 or 87.5),
+        the minimal battery charge in % when the bus reached the charging station (filled in as a float, e.g. 10 or 12.5),
+        the battery charge in % at the start (filled in as a float, e.g. 100 or 97.5)
+
+    Output:
+        Success or error statement dependent on if a bus gets below the minimal SOC
+    """
+
+    capacity = 300
+    df = planning.copy()
+    df['SOC (kW)'] = np.nan
+    df['min_battery (kW)'] = np.nan
+
+    df = df.sort_values(['bus', 'start_time']).reset_index(drop = True)
+
+    for bus, group in df.groupby('bus'):
+        idxs = group.index
+
+        if not isinstance(SOH, (int, float)):
+            raise ValueError("SOH moet een getal zijn (in procenten).")
+        max_battery = float(SOH) / 100 * capacity
+
+        battery_start = (startbat / 100) * max_battery
+        min_battery = (minbat / 100) * max_battery
+
+        usage = group['energy_consumption'].to_numpy()
+        soc = np.empty(len(usage))
+        soc[0] = battery_start
+        soc[1:] = battery_start - np.cumsum(usage[:-1])
+
+        df.loc[idxs, 'SOC (kW)'] = soc
+        df.loc[idxs, 'min_battery (kW)'] = min_battery
+
+    df['below_min_SOC'] = df['SOC (kW)'] < df['min_battery (kW)']
+    soc_too_low = df.loc[df['below_min_SOC'], ['bus', 'start_time', 'end_time']]
+
+    if not soc_too_low.empty:
+        output = SOC_periods(soc_too_low)
+
+        st.error(f"There are {len(output)} periods where a bus gets under the minimal SOC")
+        with st.expander('Click for more information on these rides'):
+            st.write(output.set_index(output.columns[0]))
+
+    else:
+        st.success('All buses stay above the minimal SOC')
 
 
 
