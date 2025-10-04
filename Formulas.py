@@ -215,7 +215,7 @@ def check_ride_duration(planning, distancematrix):
     """
 
     # Find rides that take too long
-    overlong_rides =[]
+    wrong_rides = []
 
     ensure_time_column(planning, 'start_time')
     ensure_time_column(planning, 'end_time')
@@ -237,23 +237,25 @@ def check_ride_duration(planning, distancematrix):
             continue
 
         max_time = match['max_travel_time'].values[0]
+        min_time = match['min_travel_time'].values[0]
 
-        if actual_duration > max_time:
-            overlong_rides.append({
+        if actual_duration > max_time or actual_duration < min_time:
+            wrong_rides.append({
                 'start_location': start_loc,
                 'end_location': end_loc,
                 'start_time': start,
                 'end_time': end,
                 'actual_duration': actual_duration,
+                'min_travel_time': min_time,
                 'max_travel_time': max_time
             })
 
-    overlong =  pd.DataFrame(overlong_rides)
+    wrong =  pd.DataFrame(wrong_rides)
 
-    if not overlong.empty:
-        st.error(f"There are {len(overlong)} rides outside the allowed travel time")
+    if not wrong.empty:
+        st.error(f"There are {len(wrong)} rides outside the allowed travel time")
         with st.expander("Click for more details"):
-            st.write(overlong)
+            st.write(wrong)
     else:
         st.success("All rides are within the allowed timeframe!")
 
