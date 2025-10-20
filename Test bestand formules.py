@@ -167,37 +167,40 @@ def fill_idle_periods(planning: pd.DataFrame, base_day: datetime = None):
     planning["end_dt"]   = planning["end_time"].apply(lambda t: datetime.combine(base_day.date(), t))
     
     # Nacht-overgang: als end < start, voeg 1 dag toe
-    planning["end_dt"] = planning["end_dt"].where(
-        planning["end_dt"] >= planning["start_dt"],
-        planning["end_dt"] + timedelta(days=1)
-    )
+    planning.loc[planning["end_dt"] < planning["start_dt"], "end_dt"] += timedelta(days=1)
+    
+    # Schuif ritten tussen 00:00 en 03:00 naar volgende dag
+    mask_after_midnight = planning["start_dt"].dt.hour < 3
+    planning.loc[mask_after_midnight, "start_dt"] += timedelta(days=1)
+    planning.loc[mask_after_midnight, "end_dt"]   += timedelta(days=1)
     
     idle_rows = []
 
     # Loop per bus
     for bus, bus_df in planning.groupby("bus"):
-        bus_df = bus_df.sort_values("start_dt")
-        prev_end = None
+        bus_df = bus_df.sort_values("start_dt").reset_index(drop=True)
 
-        for idx, row in bus_df.iterrows():
-            if prev_end is not None and row["start_dt"] > prev_end:
-                # voeg idle row toe
-                idle_row = row.copy()
-                idle_row["start_dt"] = prev_end
-                idle_row["end_dt"] = row["start_dt"]
-                idle_row["start_time"] = prev_end.time()
-                idle_row["end_time"] = row["start_dt"].time()
+        for i in range(len(bus_df) - 1):
+            current_end = bus_df.loc[i, "end_dt"]
+            next_start = bus_df.loc[i + 1, "start_dt"]
+
+            # Als er een gat is → voeg idle toe
+            if next_start > current_end:
+                idle_row = bus_df.loc[i].copy()
                 idle_row["activity"] = "idle"
+                idle_row["start_dt"] = current_end
+                idle_row["end_dt"] = next_start
+                idle_row["start_time"] = current_end.time()
+                idle_row["end_time"] = next_start.time()
                 idle_rows.append(idle_row)
-            prev_end = row["end_dt"]
-
+                
     # Voeg idle rows toe
     if idle_rows:
         planning = pd.concat([planning, pd.DataFrame(idle_rows)], ignore_index=True)
         planning = planning.sort_values(["bus", "start_dt"]).reset_index(drop=True)
     
     # Tijdelijke kolommen kunnen behouden blijven of verwijderd worden
-    planning = planning.drop(columns=["start_dt", "end_dt"], inplace=True)  # optioneel
+    planning = planning.drop(columns=["start_dt", "end_dt"])  # optioneel
     
     return planning
     
