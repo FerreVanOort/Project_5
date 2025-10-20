@@ -141,6 +141,65 @@ def convert_to_time(value):
             continue
     
     raise ValueError(f"Tijdformaat niet herkend: {value}")
+
+def fill_idle_periods(planning: pd.DataFrame, base_day: datetime = None):
+    """
+    Puts all non-mentioned idle times into an activity
+    
+    Input:
+        Bus Planning as a Pandas Dataframe
+        
+    Output:
+        Updated Bus Planning with added idle activities
+    """
+    
+    planning = planning.copy()
+    
+    if base_day is None:
+        base_day = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
+    
+    # Converteer eerst string naar datetime.time
+    planning["start_time"] = pd.to_datetime(planning["start_time"], format="%H:%M:%S").dt.time
+    planning["end_time"]   = pd.to_datetime(planning["end_time"], format="%H:%M:%S").dt.time
+
+    # Nu combineer met dummy datum
+    planning["start_dt"] = planning["start_time"].apply(lambda t: datetime.combine(base_day.date(), t))
+    planning["end_dt"]   = planning["end_time"].apply(lambda t: datetime.combine(base_day.date(), t))
+    
+    # Nacht-overgang: als end < start, voeg 1 dag toe
+    planning["end_dt"] = planning["end_dt"].where(
+        planning["end_dt"] >= planning["start_dt"],
+        planning["end_dt"] + timedelta(days=1)
+    )
+    
+    idle_rows = []
+
+    # Loop per bus
+    for bus, bus_df in planning.groupby("bus"):
+        bus_df = bus_df.sort_values("start_dt")
+        prev_end = None
+
+        for idx, row in bus_df.iterrows():
+            if prev_end is not None and row["start_dt"] > prev_end:
+                # voeg idle row toe
+                idle_row = row.copy()
+                idle_row["start_dt"] = prev_end
+                idle_row["end_dt"] = row["start_dt"]
+                idle_row["start_time"] = prev_end.time()
+                idle_row["end_time"] = row["start_dt"].time()
+                idle_row["activity"] = "idle"
+                idle_rows.append(idle_row)
+            prev_end = row["end_dt"]
+
+    # Voeg idle rows toe
+    if idle_rows:
+        planning = pd.concat([planning, pd.DataFrame(idle_rows)], ignore_index=True)
+        planning = planning.sort_values(["bus", "start_dt"]).reset_index(drop=True)
+    
+    # Tijdelijke kolommen kunnen behouden blijven of verwijderd worden
+    planning = planning.drop(columns=["start_dt", "end_dt"], inplace=True)  # optioneel
+    
+    return planning
     
 def create_bus_gantt_chart(planning: pd.DataFrame, base_day: datetime = None):
     """
@@ -450,18 +509,21 @@ def main(timetable, planning, distancematrix):
     planning_clean = cleanup_excel(planning)
     check_format_excel(planning_clean)
     
+    print("Fill idle periods")
+    planning_filled = fill_idle_periods(planning_clean)
+    
     print("Length of Activities")
-    planning_with_length = length_activities(planning_clean)
+    planning_with_length = length_activities(planning_filled)
 
     print("Charging Check")
-    charging_check(planning_clean)
-    charge_time(planning_clean)
+    charging_check(planning_with_length)
+    charge_time(planning_with_length)
 
     print("Check Dienstregeling Coverage")
-    check_timetable(timetable, planning_clean)
+    check_timetable(timetable, planning_with_length)
 
     print("Check Ride Duration vs Distance Matrix")
-    check_ride_duration(planning_clean, distancematrix)
+    check_ride_duration(planning_with_length, distancematrix)
     
     print("Gantt Chart of Bus Planning")
     create_bus_gantt_chart(planning_with_length)
