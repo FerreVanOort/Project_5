@@ -445,11 +445,11 @@ def main(timetable, planning, distancematrix):
     """
 
     print("Bus Planning Control Center")
-
+    
     print("Cleanup & Format Check")
     planning_clean = cleanup_excel(planning)
     check_format_excel(planning_clean)
-
+    
     print("Length of Activities")
     planning_with_length = length_activities(planning_clean)
 
