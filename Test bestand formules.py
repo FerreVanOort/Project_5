@@ -142,7 +142,7 @@ def convert_to_time(value):
     
     raise ValueError(f"Tijdformaat niet herkend: {value}")
     
-def create_bus_gantt_chart(planning: pd.DataFrame):
+def create_bus_gantt_chart(planning: pd.DataFrame, base_day: datetime = None):
     """
     Create a Gantt chart for bus planning.
     
@@ -164,15 +164,33 @@ def create_bus_gantt_chart(planning: pd.DataFrame):
     """
     planning = planning.copy()
     
-    # Combine time columns with dummy date
-    planning["start_dt"] = planning["start_time"].apply(lambda t: datetime.combine(datetime(1900,1,1), t))
-    planning["end_dt"] = planning["end_time"].apply(lambda t: datetime.combine(datetime(1900,1,1), t))
+    # Als geen base_day opgegeven → gebruik vandaag
+    if base_day is None:
+        base_day = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
     
-    # Handle night transitions (end < start)
+    # Voeg planning_day toe
+    planning["planning_day"] = base_day
+    
+    # Definieer cutoff: 00:00 - 03:00 naar volgende dag
+    start_cutoff = datetime.strptime("00:00:00", "%H:%M:%S").time()
+    end_cutoff   = datetime.strptime("03:00:00", "%H:%M:%S").time()
+    
+    mask_next_day = (planning["start_time"] >= start_cutoff) & (planning["start_time"] <= end_cutoff)
+    planning.loc[mask_next_day, "planning_day"] += pd.Timedelta(days=1)
+    
+    # Combineer start en end tijd met de juiste datum
+    planning["start_dt"] = planning.apply(lambda row: datetime.combine(row["planning_day"].date(), row["start_time"]), axis=1)
+    planning["end_dt"]   = planning.apply(lambda row: datetime.combine(row["planning_day"].date(), row["end_time"]), axis=1)
+    
+    # Optioneel: nacht-overgangen verwerken als end < start
     planning["end_dt"] = planning["end_dt"].where(
         planning["end_dt"] >= planning["start_dt"],
         planning["end_dt"] + timedelta(days=1)
     )
+    
+    # Bereken duur in minuten
+    planning["duration_min"] = (planning["end_dt"] - planning["start_dt"]).dt.total_seconds() / 60
+    
     
     # Create Gantt chart
     color_map = {
