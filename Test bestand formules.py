@@ -488,6 +488,69 @@ def SOC_check(planning: pd.DataFrame, SOH, minbat, startbat):
 
     else:
         print('All buses stay above the minimal SOC')
+        
+def distancematrix_code(planning: pd.DataFrame):
+    """
+    Adds a column with an identifier to more efficiently calculate energy consumption
+    
+    Input:
+        Bus Planning as a Pandas DataFrame
+        
+    Output:
+        Bus Planning with an added identifier column as a Pandas DataFrame
+    """
+    
+    planning = planning.copy()
+    planning["identifier"] = (
+        planning["start_location"].astype(str)
+        + "-" + planning["end_location"].astype(str)
+        + "-" + planning["line"].astype(str))
+    
+    return planning
+
+def calculate_energy_consumption(planning: pd.DataFrame, distancematrix: pd.DataFrame, driving_usage, idle_usage, charging_speed):
+    """
+    Creates a column with the newly calculated energy usage
+    
+    Input:
+        Bus Planning as a Pandas DataFrame
+        Distances in a dictionary
+        Driving usage in kW/km
+        Idle usage is a constant
+        Charging speed in kW/h
+        
+    Output:
+        Bus Planning with an added column with the newly calculated energy consumption
+    """
+    
+    planning = planning.copy()
+    distance = distancematrix.copy()
+    
+    distance.rename(columns = {"start": "start_location", "end": "end_location"}, inplace = True)
+    
+    df = planning.merge(
+        distance[["start_location", "end_location", "line", "distance_m"]],
+        on = ["start_location", "end_location", "line"],
+        how = "left"
+    )
+    
+    if "diff_min" not in df.columns:
+        df["diff_min"] = df["diff"].dt.total_seconds() / 60
+        
+    df["energy_consumption_new"] = np.select(
+        condlist = [
+            df["activity"].str.contains("idle", case = False, na = False),
+            df["activity"].str.contains("charging", case = False, na = False)
+        ],
+        choicelist = [
+            idle_usage,
+            (df["diff_min"] * charging_speed * -1) / 60
+        ],
+        default = (df["distance_m"] / 1000) * driving_usage
+    )
+    
+    return df
+
 
 
 timetable = pd.read_excel('Timetable.xlsx')
