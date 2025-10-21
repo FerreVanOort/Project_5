@@ -14,7 +14,7 @@ st.set_page_config(page_title="Prototype groep 8", layout="wide")
 st.sidebar.header("Menu")
 page = st.sidebar.radio(
     "Go to page:",
-    ["Bus Planning", "Advanced Options", "User Manual", "About Us"],
+    ["Planning Checker", "Advanced Options", "User Manual", "About Us"],
     label_visibility="collapsed"
 )
 
@@ -22,18 +22,18 @@ page = st.sidebar.radio(
 if "driving_usage" not in st.session_state:
     st.session_state.driving_usage = 1.2
 if "idle_usage" not in st.session_state:
-    st.session_state.idle_usage = 5
+    st.session_state.idle_usage = 5.0
 if "charging_speed" not in st.session_state:
-    st.session_state.charging_speed = 450
+    st.session_state.charging_speed = 450.0
 if "SOH" not in st.session_state:
-    st.session_state.soh = 90
+    st.session_state.soh = 90.0
 if "minbat" not in st.session_state:
-    st.session_state.minbat = 10
+    st.session_state.minbat = 10.0
 if "startbat" not in st.session_state:
-    st.session_state.startbat = 100
+    st.session_state.startbat = 100.0
     
-# Page 1 - Bus Planning
-if page == "Bus Planning":
+# Page 1 - Planning Checker
+if page == "Planning Checker":
     st.title("Prototype Group 8 - Bus Planning Check")
     
     st.subheader("Upload Bus Planning, Timetable, and Distance Matrix!")
@@ -52,14 +52,14 @@ if page == "Bus Planning":
             # --- Cleanup and format check ---
             st.header("Cleanup & Format Check")
             planning_clean = fm.cleanup_excel(planning)
+            timetable = fm.cleanup_timetable(timetable)
+            distancematrix = fm.cleanup_timetable(distancematrix)
             fm.check_format_excel(planning_clean)
             
             # --- Fill idle periods ---
-            st.header("Fill empty spaces")
             planning_filled = fm.fill_idle_periods(planning_clean)
             
             # --- Length of activities ---
-            st.header("Calculated activity length")
             planning_length = fm.length_activities(planning_filled)
             
             # --- Charging check ---
@@ -73,10 +73,9 @@ if page == "Bus Planning":
             
             # --- Ride duration check ---
             st.header("Checked ride duration times")
-            fm.check_ride_duration(planning_length, timetable)
+            fm.check_ride_duration(planning_length, distancematrix)
             
             # --- Energy calculation ---
-            st.header("Calculated energy consumption")
             planning_energy = fm.calculate_energy_consumption(
                 planning_length,
                 distancematrix,
@@ -111,7 +110,7 @@ elif page == "Advanced Options":
     st.markdown("Change values to impact energy usage")
     
     st.session_state.driving_usage = st.number_input(
-        "Driving usage (kW/km)",
+        "Driving usage (kW/km) [Please round to 1 decimal point]",
         min_value=0.0,
         max_value=100.0,
         value=st.session_state.driving_usage,
@@ -121,53 +120,47 @@ elif page == "Advanced Options":
     )
 
     st.session_state.idle_usage = st.number_input(
-        "Idle usage (kW constant)",
+        "Idle usage (kW constant) [Please round to 1 decimal point]",
         min_value=0.0,
         max_value=500.0,
         value=st.session_state.idle_usage,
-        step=0.5,
+        step=0.1,
         format="%.1f",
         help="Constant usage while idle."
     )
 
     st.session_state.charging_speed = st.number_input(
-        "Charging speed (kW/h)",
+        "Charging speed (kW/h) [Please round to a whole number]",
         min_value=0.0,
         max_value=2000.0,
         value=st.session_state.charging_speed,
-        step=10.0,
+        step=1.0,
         format="%.1f",
-        help="Charging speed in kWh per hour (negative output)."
+        help="Charging speed in kWh per hour."
     )
 
-    st.session_state.soh = st.number_input(
-        "State of Health of motor",
+    st.session_state.soh = st.slider(
+        "State of Health of battery [%]",
         min_value=0.0,
         max_value=100.0,
         value=st.session_state.soh,
-        step=0.1,
-        format="%.2f",
-        help="State of Health of the motor in percentages."
+        step=0.5,
     )
 
-    st.session_state.minbat = st.number_input(
-        "Minimum battery of motor",
+    st.session_state.minbat = st.slider(
+        "Minimum battery when reaching garage [%]",
         min_value=0.0,
         max_value=100.0,
         value=st.session_state.minbat,
-        step=0.1,
-        format="%.1f",
-        help="Minimum battery required when a bus reaches the garage in percentages."
+        step=0.5,
     )
 
-    st.session_state.startbat = st.number_input(
-        "Charging speed (kW/h)",
+    st.session_state.startbat = st.slider(
+        "Starting battery when the day starts [%]",
         min_value=0.0,
         max_value=100.0,
         value=st.session_state.startbat,
-        step=0.1,
-        format="%.1f",
-        help="Battery percentage when a bus starts the day."
+        step=0.5,
     )
     
     st.info("⚙️ These options are automatically implemented in the calculations about the bus plan.")

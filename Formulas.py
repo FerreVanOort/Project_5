@@ -28,6 +28,21 @@ def cleanup_excel(planning:pd.DataFrame) -> pd.DataFrame:
     planning.columns = planning.columns.str.lower()
     return planning
 
+def cleanup_timetable(timetable: pd.DataFrame) -> pd.DataFrame:
+    """
+    Cleans up timetable formatting
+    
+    Input:
+        Timetable as a Pandas DataFrame
+        
+    Output:
+        Cleaned timetable as a Pandas Dataframe
+    """
+    
+    timetable = timetable.copy()
+    timetable.columns = [str(c).strip().replace("\u00A0","").replace(" ","_").lower() for c in timetable.columns]
+    return timetable
+
 def check_format_excel(planning:pd.DataFrame):
     """
     Input:
@@ -188,6 +203,11 @@ def fill_idle_periods(planning: pd.DataFrame, base_day: datetime = None):
                 idle_row["end_dt"] = next_start
                 idle_row["start_time"] = current_end.time()
                 idle_row["end_time"] = next_start.time()
+                
+                idle_row["line"] = ""
+                idle_row["start_location"] = bus_df.loc[i, "end_location"]
+                idle_row["end_location"] = bus_df.loc[i, "end_location"]
+                
                 idle_rows.append(idle_row)
                 
     # Add idle rows
@@ -342,6 +362,14 @@ def check_ride_duration(planning, distancematrix):
         Success or error statement dependent on the rides being within the alloted time
     """
 
+    required_cols = ["start", "end", "min_travel_time", "max_travel_time", "line"]
+    missing = [c for c in required_cols if c not in distancematrix.columns]
+    if missing:
+        st.error(f"Distance matrix mist kolommen: {', '.join(missing)}")
+        st.write("Looking for:", required_cols)
+        st.write("Actually have:", list(distancematrix.columns))
+        return
+    
     # Put min/max travel times to a float
     distancematrix["min_travel_time"] = pd.to_numeric(distancematrix["min_travel_time"], errors='coerce')
     distancematrix["max_travel_time"] = pd.to_numeric(distancematrix["max_travel_time"], errors='coerce')
@@ -354,16 +382,20 @@ def check_ride_duration(planning, distancematrix):
     wrong_rides = []
 
     for _, ride in planning.iterrows():
+        if ride.get("activity") == "idle":
+            continue
+        
         start_loc = ride["start_location"]
         end_loc = ride["end_location"]
         busline = ride["line"]
         actual_duration = ride["duration_min"]
+        bus = ride["bus"]
 
         # Look for matching travel time
         match = distancematrix[
-            (distancematrix["start"] == start_loc) &
-            (distancematrix["end"] == end_loc) &
-            (distancematrix["line"] == busline)
+            (distancematrix["start"].astype(str) == str(start_loc)) &
+            (distancematrix["end"].astype(str) == str(end_loc)) &
+            (distancematrix["line"].astype(str) == str(busline))
         ]
 
         if match.empty:
@@ -386,7 +418,9 @@ def check_ride_duration(planning, distancematrix):
                 "end_time": ride["end_time"],
                 "actual_duration_min": actual_duration,
                 "min_travel_time": min_time,
-                "max_travel_time": max_time
+                "max_travel_time": max_time,
+                "line": busline,
+                "bus": bus
             })
 
     wrong_df = pd.DataFrame(wrong_rides)
@@ -494,6 +528,12 @@ def calculate_energy_consumption(planning: pd.DataFrame, distancematrix: pd.Data
     distance = distancematrix.copy()
     
     distance.rename(columns = {"start": "start_location", "end": "end_location"}, inplace = True)
+    
+    for col in ["start_location", "end_location", "line"]:
+        if col in planning.columns:
+            planning[col] = planning[col].astype(str)
+        if col in distance.columns:
+            distance[col] = distance[col].astype(str)
     
     df = planning.merge(
         distance[["start_location", "end_location", "line", "distance_m"]],
