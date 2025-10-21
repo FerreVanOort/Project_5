@@ -64,7 +64,7 @@ def charging_check(planning:pd.DataFrame):
         st.subheader("Error lines:")
         st.dataframe(errors, use_container_width = True)
         
-def length_activities(planning:pd.DataFrame) -> pd.DataFrame:
+def length_activities(planning:pd.DataFrame, start_col = "start_time", end_col = "end_time") -> pd.DataFrame:
     """
     Input:
         Bus planning as a Pandas Dataframe
@@ -72,12 +72,22 @@ def length_activities(planning:pd.DataFrame) -> pd.DataFrame:
     Returns:
         Bus planning as a Pandas DataFrame with an extra row with duration of activities
     """
-    # Puts planning columns in similar datetime format
-    planning[planning.columns[3]] = pd.to_datetime(planning.iloc[:,3], format = "%H:%M:%S")
-    planning[planning.columns[4]] = pd.to_datetime(planning.iloc[:,4], format = "%H:%M:%S")
-    # Adds new column to DataFrame
-    planning["diff"] = planning[planning.columns[4]] - planning[planning.columns[3]]
-    return planning
+    # Converts columns to datetime with dummy date
+    start_dt = pd.to_datetime(planning[start_col], format="%H:%M:%S")
+    end_dt = pd.to_datetime(planning[end_col], format="%H:%M:%S")
+
+    # Nacht-overgang detectie: als end < start → 1 dag optellen
+    end_dt = end_dt.where(end_dt >= start_dt, end_dt + pd.Timedelta(days=1))
+
+    # Bereken diff en duration_min
+    planning["diff"] = end_dt - start_dt
+    planning["duration_min"] = planning["diff"].dt.total_seconds() / 60
+
+    # Zet kolommen terug naar alleen tijd (verwijder dummy datum)
+    planning[start_col] = start_dt.dt.time
+    planning[end_col] = end_dt.dt.time
+    
+    
 
 def charge_time(planning:pd.DataFrame):
     """
