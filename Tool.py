@@ -3,6 +3,7 @@
 # Imports
 
 import Formulas as fm
+import PlanningMaker as pm
 import io
 from datetime import datetime
 import pandas as pd
@@ -14,7 +15,7 @@ st.set_page_config(page_title="Prototype groep 8", layout="wide")
 st.sidebar.header("Menu")
 page = st.sidebar.radio(
     "Go to page:",
-    ["Planning Checker", "Advanced Options", "User Manual", "About Us"],
+    ["Planning Checker", "Planning Maker", "Advanced Options", "User Manual", "About Us"],
     label_visibility="collapsed"
 )
 
@@ -103,8 +104,18 @@ if page == "Planning Checker":
     else:
         st.info("Upload a bus plan, timetable, and distance matrix to start!")
         
+
+# Page 2 - Schedule Builder
+elif page == "Planning Maker":
+    st.title("Bus Planning Maker")
+    st.write("Generate an optimized bus schedule from a timetable")
+    
+    st.subheader("Upload Timetable and Distance Matrix")
+    uploaded_timetable_build = st.file_uploader("Upload timetable (.xlsx)", type=["xlsx"], key="time_build")
+    uploaded_distances_build = st.file_uploader("Upload distance matrix (.xlsx)", type=["xlsx"], key="dist_build")
         
-# Page 2 - Advanced Options
+        
+# Page 3 - Advanced Options
 elif page == "Advanced Options":
     st.title("Advanced Options")
     st.markdown("Change values to impact energy usage")
