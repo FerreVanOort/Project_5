@@ -114,7 +114,7 @@ elif page == "Planning Maker":
     uploaded_timetable_build = st.file_uploader("Upload timetable (.xlsx)", type=["xlsx"], key="time_build")
     uploaded_distances_build = st.file_uploader("Upload distance matrix (.xlsx)", type=["xlsx"], key="dist_build")
         
-        
+
 # Page 3 - Advanced Options
 elif page == "Advanced Options":
     st.title("Advanced Options")
@@ -175,3 +175,13 @@ elif page == "Advanced Options":
     )
     
     st.info("⚙️ These options are automatically implemented in the calculations about the bus plan.")
+
+
+# Page 4 - User Manual
+elif page == "User Manual":
+    st.title("User Manual")
+
+
+# Page 5 - About Us
+elif page == "About Us":
+    st.title("About Us")
