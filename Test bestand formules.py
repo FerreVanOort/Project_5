@@ -591,7 +591,13 @@ def main(timetable, planning, distancematrix):
     print("Check Ride Duration vs Distance Matrix")
     check_ride_duration(planning_with_length, distancematrix)
     
+    print("Calculating energy consumption")
+    planning_calculated = calculate_energy_consumption(planning_with_length, distancematrix, 1.2, 5, 450)
+    
+    print("Check SOC")
+    SOC_check(planning_calculated, 90, 10, 100)
+    
     print("Gantt Chart of Bus Planning")
-    create_bus_gantt_chart(planning_with_length)
+    create_bus_gantt_chart(planning_calculated)
     
 main(timetable, planning, distancematrix)
