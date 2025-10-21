@@ -89,7 +89,6 @@ def length_activities(planning:pd.DataFrame, start_col="start_time", end_col="en
     planning[start_col] = start_dt.dt.time
     planning[end_col] = end_dt.dt.time
 
-    print("✅ All time values are valid — 'diff' calculated with night-overrides!")
     return planning
 
 
