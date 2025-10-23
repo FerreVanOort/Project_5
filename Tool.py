@@ -36,7 +36,7 @@ if "startbat" not in st.session_state:
     
 # Page 1 - Planning Checker
 if page == "Planning Checker":
-    st.title("Prototype Group 8 - Bus Planning Check")
+    st.title("Prototype Group 8 - Bus Planning Check", anchor='group 8')
     
     st.subheader("Upload Bus Planning, Timetable, and Distance Matrix!")
     uploaded_planning = st.file_uploader("Upload planning (.xlsx)", type=["xlsx"], key="plan_upload")
@@ -108,7 +108,7 @@ if page == "Planning Checker":
 
 # Page 2 - Schedule Builder
 elif page == "Planning Maker":
-    st.title("Prototype Group 8 - Bus Planning Maker")
+    st.title("Prototype Group 8 - Bus Planning Maker", anchor='group 8')
     
     st.subheader("Upload Timetable and Distance Matrix")
     uploaded_timetable_build = st.file_uploader("Upload timetable (.xlsx)", type=["xlsx"], key="time_build")
@@ -317,7 +317,7 @@ elif page == "Planning Maker":
 
 # Page 3 - Advanced Options
 elif page == "Advanced Options":
-    st.title("Advanced Options")
+    st.title("Advanced Options", anchor='group 8')
     st.markdown("Change values to impact energy usage")
     
     st.session_state.driving_usage = st.number_input(
@@ -379,11 +379,56 @@ elif page == "Advanced Options":
 
 # Page 4 - User Manual
 elif page == "User Manual":
-    st.title("User Manual")
+    st.title("User Manual", anchor='group 8')
 
 
 # Page 5 - About Us
 elif page == "About Us":
-    st.title("About Us")
+    st.title("About Us", anchor='group 8')
     st.header('The team')
-    st.write("""We are a team of enthusiastic students - Ferre, Mirthe and Fea - from Eindhoven, studying Applied mathematics at the Fontys University of Applied Sciences. Ferre takes the lead in dividing the tasks and ensuring everything runs smoothly. Ferre focuses on coding the planning maker, while Fea is responsible for coding the planning checker. Mirthe is responsible for the streamlit interface. Together, we bring our unique skills and perspectives to create innovative solutions in the field of applied mathematics.""")
+    st.write("""We are a team of enthusiastic students - Ferre, Mirthe and Fea - from Eindhoven, studying Applied mathematics at the Fontys University of Applied Sciences. Ferre takes the lead in dividing the tasks and ensuring everything runs smoothly. Ferre also focuses on coding the planning maker, while Fea is responsible for coding the planning checker. Mirthe is responsible for the streamlit interface. Together, we bring our unique skills and perspectives to create innovative solutions in the field of applied mathematics.""")
+    st.header('Project Planning Checker and Maker for Electric Bus Fleets')
+    st.write("""The PlanningChecker verifies whether your bus schedule is complete and accurate. Whether you’re new to this type of software or already experienced, the tool helps you evaluate and improve your planning.
+
+With the growing shift toward electric buses, scheduling now involves stricter requirements. PlanningChecker ensures that each bus plan complies with these modern standards.
+
+It checks if all routes are covered, whether each bus has sufficient charging time (at least 15 minutes), and if any bus’s State of Charge (SOC) drops below the allowed minimum. If any conditions aren’t met, PlanningChecker clearly indicates where the issues occur, making it easier for planners to identify problems, correct them efficiently, and reduce errors in the overall scheduling process.""")
+    
+    st.header("Meet the team")
+
+col1, col2, col3= st.columns(3)
+with col1:
+    st.markdown(
+        """
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+        <div style="background-color: #6e6e6e; padding: 10px; border-style:solid; border-width:2px; border-color:#404040; border-radius:5px;text-align:center;">
+            <h5 style="color: white;">Fea Sanders</h5>
+            <i class="fa fa-github" style="font-size:30px; color: black;"></i><br>
+            <a href='https://github.com/Fea-Sanders' style="text-decoration:none; color: #003cff;"">See Github</a>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+with col2:
+    st.markdown(
+        """
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+        <div style="background-color: #6e6e6e; padding: 10px; border-style:solid; border-width:2px; border-color:#404040; border-radius:5px;text-align:center;">
+            <h5 style="color: white;">Ferre van Oort<br></h5>
+            <i class="fa fa-github" style="font-size:30px; color: black;"></i><br>
+            <a href='https://github.com/FerreVanOort' style="text-decoration:none; color: #003cff;"">See Github</a>
+        </div>
+        """, 
+        unsafe_allow_html=True
+    )
+with col3:
+    st.markdown(
+        """
+        <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
+        <div style="background-color: #6e6e6e; padding: 10px; border-style:solid; border-width:2px; border-color:#404040; border-radius:5px;text-align:center;">
+            <h5 style="color: white;">Mirthe Termeulen<br></h5>
+            <i class="fa fa-github" style="font-size:30px; color: black;"></i><br>
+            <a href='https://github.com/mirthet' style="text-decoration:none; color: #003cff;"">See Github</a>
+        </div>
+        """, 
+        unsafe_allow_html=True)
