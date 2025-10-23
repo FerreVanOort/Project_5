@@ -385,3 +385,5 @@ elif page == "User Manual":
 # Page 5 - About Us
 elif page == "About Us":
     st.title("About Us")
+    st.header('The team')
+    st.write("""We are a team of enthusiastic students - Ferre, Mirthe and Fea - from Eindhoven, studying Applied mathematics at the Fontys University of Applied Sciences. Ferre takes the lead in dividing the tasks and ensuring everything runs smoothly. Ferre focuses on coding the planning maker, while Fea is responsible for coding the planning checker. Mirthe is responsible for the streamlit interface. Together, we bring our unique skills and perspectives to create innovative solutions in the field of applied mathematics.""")
