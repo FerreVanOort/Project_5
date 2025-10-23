@@ -396,9 +396,9 @@ It checks if all routes are covered, whether each bus has sufficient charging ti
     
     st.header("Meet the team")
 
-col1, col2, col3= st.columns(3)
-with col1:
-    st.markdown(
+    col1, col2, col3= st.columns(3)
+    with col1:
+        st.markdown(
         """
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
         <div style="background-color: #6e6e6e; padding: 10px; border-style:solid; border-width:2px; border-color:#404040; border-radius:5px;text-align:center;">
@@ -409,8 +409,8 @@ with col1:
         """, 
         unsafe_allow_html=True
     )
-with col2:
-    st.markdown(
+    with col2:
+        st.markdown(
         """
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
         <div style="background-color: #6e6e6e; padding: 10px; border-style:solid; border-width:2px; border-color:#404040; border-radius:5px;text-align:center;">
@@ -421,8 +421,8 @@ with col2:
         """, 
         unsafe_allow_html=True
     )
-with col3:
-    st.markdown(
+    with col3:
+        st.markdown(
         """
         <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/4.7.0/css/font-awesome.min.css">
         <div style="background-color: #6e6e6e; padding: 10px; border-style:solid; border-width:2px; border-color:#404040; border-radius:5px;text-align:center;">
