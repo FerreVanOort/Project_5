@@ -281,9 +281,7 @@ def create_gannt_chart(planning: pd.DataFrame, base_day: datetime = None):
 
     planning["display_group"] = planning.apply(_pick_display_group, axis=1)
 
-    # DEBUG: laat zien wat er echt gebruikt wordt
-    st.write("UNIQUE LABELS USED FOR COLORING:")
-    st.write(planning["display_group"].unique())
+    
 
     # 5. Stel kleurmap samen
     base_colors = {
@@ -303,9 +301,7 @@ def create_gannt_chart(planning: pd.DataFrame, base_day: datetime = None):
     ]
     for idx, g in enumerate(line_groups):
         color_map[g] = palette_cycle[idx % len(palette_cycle)]
-    st.write("UNIQUE LABELS USED FOR COLORING:")
-    st.write(planning["display_group"].unique())
-
+    
     # 6. Plot
     fig = px.timeline(
         planning,
@@ -505,55 +501,112 @@ def SOC_periods(planning: pd.DataFrame) -> pd.DataFrame:
 
 def SOC_check(planning: pd.DataFrame, SOH, minbat, startbat):
     """
-    Checks if the SOC gets below minimal value
+    Checks when the SOC drops below the allowed minimum.
+    Reports BOTH kWh and %.
 
-    Input:
-        Bus Planning as a Pandas DataFrame,
-        the SOH of the battery in % (filled in as a float, e.g. 90 or 87.5),
-        the minimal battery charge in % when the bus reached the charging station (filled in as a float, e.g. 10 or 12.5),
-        the battery charge in % at the start (filled in as a float, e.g. 100 or 97.5)
-
-    Output:
-        Success or error statement dependent on if a bus gets below the minimal SOC
+    SOH      = health of the battery in %
+    minbat   = minimale toegestane SOC in %
+    startbat = SOC aan het begin van de dag in %
     """
 
-    capacity = 300
-    df = planning.copy()
-    df['SOC (kW)'] = np.nan
-    df['min_battery (kW)'] = np.nan
+    capacity = 300  # nominale batterijcapaciteit in kWh
+    df = planning.copy().sort_values(['bus', 'start_time']).reset_index(drop=True)
 
-    df = df.sort_values(['bus', 'start_time']).reset_index(drop = True)
+    # prepare columns
+    df['SOC (kWh)'] = np.nan
+    df['SOC (%)'] = np.nan
+    df['min_battery (kWh)'] = np.nan
+    df['min_battery (%)'] = np.nan
 
     for bus, group in df.groupby('bus'):
         idxs = group.index
 
-        if not isinstance(SOH, (int, float)):
-            raise ValueError("SOH moet een getal zijn (in procenten).")
-        max_battery = float(SOH) / 100 * capacity
+        # effectieve max capaciteit met SOH
+        max_battery_kwh = (SOH / 100.0) * capacity   # bv 90% * 300 = 270 kWh bruikbaar
 
-        battery_start = (startbat / 100) * max_battery
-        min_battery = (minbat / 100) * max_battery
+        # start SOC in kWh
+        start_soc_kwh = (startbat / 100.0) * max_battery_kwh
+
+        # drempel in kWh
+        min_soc_kwh = (minbat / 100.0) * max_battery_kwh
 
         usage = group['energy_consumption'].to_numpy()
-        soc = np.empty(len(usage))
-        soc[0] = battery_start
-        soc[1:] = battery_start - np.cumsum(usage[:-1])
 
-        df.loc[idxs, 'SOC (kW)'] = soc
-        df.loc[idxs, 'min_battery (kW)'] = min_battery
+        # SOC in kWh aan het begin van elke activiteit
+        soc_kwh = np.empty(len(usage))
+        soc_kwh[0] = start_soc_kwh
+        soc_kwh[1:] = start_soc_kwh - np.cumsum(usage[:-1])
 
-    df['below_min_SOC'] = df['SOC (kW)'] < df['min_battery (kW)']
-    soc_too_low = df.loc[df['below_min_SOC'], ['bus', 'start_time', 'end_time']]
+        # Zet SOC om naar %
+        soc_pct = (soc_kwh / max_battery_kwh) * 100.0
+        min_soc_pct = (min_soc_kwh / max_battery_kwh) * 100.0  # dit is in principe gelijk aan minbat, maar we rekenen 'm netjes uit
 
-    if not soc_too_low.empty:
-        output = SOC_periods(soc_too_low)
+        # schrijf de kolommen terug voor deze bus
+        df.loc[idxs, 'SOC (kWh)'] = soc_kwh
+        df.loc[idxs, 'SOC (%)'] = soc_pct
+        df.loc[idxs, 'min_battery (kWh)'] = min_soc_kwh
+        df.loc[idxs, 'min_battery (%)'] = min_soc_pct
 
-        st.error(f"There are {len(output)} periods where a bus gets under the minimal SOC")
-        with st.expander('Click for more information on these rides'):
-            st.write(output.set_index(output.columns[0]))
+    # markeer waar het fout gaat
+    df['below_min_SOC'] = df['SOC (kWh)'] < df['min_battery (kWh)']
 
+    # eerste probleemmoment per bus verzamelen
+    first_below_list = []
+    for bus, group in df.groupby('bus'):
+        bad_rows = group[group['below_min_SOC']]
+        if not bad_rows.empty:
+            first_row = bad_rows.iloc[0]
+
+            first_below_list.append({
+                "bus": bus,
+                "time_when_SOC_too_low": first_row['start_time'],
+                "activity": first_row.get('activity', None),
+                "start_location": first_row.get('start_location', None),
+                "end_location": first_row.get('end_location', None),
+
+                # actuele SOC op dat moment
+                "SOC_at_that_time (kWh)": round(first_row['SOC (kWh)'], 2),
+                "SOC_at_that_time (%)": round(first_row['SOC (%)'], 1),
+
+                # ondergrens
+                "minimum_allowed (kWh)": round(first_row['min_battery (kWh)'], 2),
+                "minimum_allowed (%)": round(first_row['min_battery (%)'], 1),
+            })
+
+    if not first_below_list:
+        st.success("✅ All buses stay above the minimal SOC limit")
     else:
-        st.success('All buses stay above the minimal SOC')
+        st.error(f"⚠️ {len(first_below_list)} bus(es) drop below the minimal SOC limit")
+
+        detail_df = pd.DataFrame(first_below_list)
+        st.write("First moment where each bus violates SOC limit:")
+        st.dataframe(detail_df, use_container_width=True)
+
+        # optioneel: volledige timeline/debug
+        with st.expander("Show full SOC timeline per bus (debug)"):
+            soc_view = df[[
+                'bus',
+                'start_time',
+                'end_time',
+                'activity',
+                'SOC (kWh)',
+                'SOC (%)',
+                'min_battery (kWh)',
+                'min_battery (%)',
+                'below_min_SOC',
+                'start_location',
+                'end_location',
+                'energy_consumption'
+            ]]
+            # rond iets af voor leesbaarheid in debug view
+            soc_view['SOC (kWh)'] = soc_view['SOC (kWh)'].round(2)
+            soc_view['SOC (%)'] = soc_view['SOC (%)'].round(1)
+            soc_view['min_battery (kWh)'] = soc_view['min_battery (kWh)'].round(2)
+            soc_view['min_battery (%)'] = soc_view['min_battery (%)'].round(1)
+
+            st.dataframe(soc_view, use_container_width=True)
+
+
 
 def calculate_energy_consumption(planning: pd.DataFrame, distancematrix: pd.DataFrame, driving_usage, idle_usage, charging_speed):
     """
