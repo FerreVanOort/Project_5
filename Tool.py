@@ -1,16 +1,15 @@
-## Main tool
+# Tool.py / Main tool
 
-# Imports
-from fileinput import filename
-import Formulas as fm
-import PlanningMaker as pm
 import io
-from datetime import datetime
+import base64
+from pathlib import Path
 from datetime import timedelta
 import pandas as pd
 import streamlit as st
-import base64
-from pathlib import Path
+
+import Formulas as fm
+import PlanningMaker as pm
+
 
 st.set_page_config(page_title="Prototype groep 8", layout="wide")
 
@@ -36,6 +35,48 @@ if "minbat" not in st.session_state:
 if "startbat" not in st.session_state:
     st.session_state.startbat = 100.0
 
+
+# -------------------------------------------------
+# Helper for About Us cards
+# -------------------------------------------------
+BASE_DIR = Path(__file__).parent
+IMG_DIR = BASE_DIR / "images"
+
+def team_member(filename: str, name: str, linkedin_url: str):
+    p = IMG_DIR / filename
+    try:
+        img_bytes = p.read_bytes()
+    except Exception as e:
+        st.error(f"Kon afbeelding niet laden: {p} ({e})")
+        return ""
+
+    ext = p.suffix.lower()
+    mime = "image/png" if ext == ".png" else "image/jpeg"
+    b64 = base64.b64encode(img_bytes).decode("utf-8")
+
+    return f"""
+    <div style="
+        background-color:#6e6e6e;
+        padding:15px;
+        border-style:solid;
+        border-width:2px;
+        border-color:#404040;
+        border-radius:10px;
+        text-align:center;
+        ">
+        <img src="data:{mime};base64,{b64}"
+            style="border-radius:50%;
+                width:120px;
+                height:120px;
+                object-fit:cover;
+                margin-bottom:10px;">
+        <h5 style="color:white; margin:0; margin-bottom:8px;">{name}</h5>
+        <a href="{linkedin_url}" target="_blank"
+            style="text-decoration:none; color:#0077b5; font-weight:bold;">
+            LinkedIn
+        </a>
+    </div>
+    """
 
 
 # -------------------------------------------------
@@ -64,7 +105,7 @@ if page == "Planning Checker":
             distancematrix = fm.cleanup_timetable(distancematrix)
             fm.check_format_excel(planning_clean)
             
-            # --- Fill idle periods ---
+            # --- Fill idle periods (checker will insert idle if missing gaps) ---
             planning_filled = fm.fill_idle_periods(planning_clean)
             
             # --- Length of activities ---
@@ -102,14 +143,15 @@ if page == "Planning Checker":
             )
             
             # --- Gantt Chart ---
-            st.header("Gannt Chart of uploaded Bus Plan")
+            st.header("Gantt Chart of uploaded Bus Plan")
             fm.create_gannt_chart(planning_energy)
             
         except Exception as e:
-            st.error(f"Something went wrong with the processing of files {e}")
+            st.error(f"Something went wrong with the processing of files: {e}")
+            st.exception(e)
         
     else:
-        st.info("Upload a bus plan, timetable, and distance matrix to start!")
+        st.info("Upload a bus plan (use the CheckerInput sheet from Planning Maker), timetable, and distance matrix to start!")
 
 
 # -------------------------------------------------
@@ -153,6 +195,7 @@ elif page == "Planning Maker":
                 st.write(f"Start SOC: {st.session_state.startbat:.1f}% of usable")
                 st.write(f"Min SOC: {st.session_state.minbat:.1f}% of usable")
                 st.write(f"Drive consumption: {st.session_state.driving_usage:.2f} kWh/km")
+                st.write(f"Idle usage: {st.session_state.idle_usage:.2f} kW")
                 st.write(f"Charging power: {st.session_state.charging_speed:.1f} kW")
                 st.write("Charging only allowed at garage, min 15 min session.")
             
@@ -218,10 +261,11 @@ elif page == "Planning Maker":
                         st.success(f"✅ Planning complete! {len(assignments)} rides processed")
                         
                         # -----------------------------
-                        # 6. BOUW TABELLEN VOOR WEERGAVE
+                        # 6. DATAFRAMES VOOR WEERGAVE
                         # -----------------------------
                         usable_cap_after_soh = pm.BusConstants.usable_capacity_kwh()
                         
+                        # ---- A) per rit overzicht (display only)
                         schedule_rows = []
                         for a in assignments:
                             pct_before = (
@@ -246,11 +290,14 @@ elif page == "Planning Maker":
                         
                         df_planning = pd.DataFrame(schedule_rows)
                         
+                        # ---- B) tijdlijnblokken (charging / material trip / idle / service trip)
                         gantt_rows = []
+
                         for a in assignments:
-                            # Charging block (before ride)
+                            # 1. charging_before block (als bus eerst laadt)
                             if a.charging_before is not None:
                                 charge_arrival_dt, charge_leave_dt, bat_before_ch, bat_after_ch = a.charging_before
+                                charged_kwh = bat_after_ch - bat_before_ch  # positief
                                 
                                 gantt_rows.append({
                                     "bus": a.bus_id,
@@ -262,10 +309,11 @@ elif page == "Planning Maker":
                                     "start_location": pm.BusConstants.GARAGE_NAME,
                                     "end_location": pm.BusConstants.GARAGE_NAME,
                                     "line": "",
-                                    "energy_consumption": -(bat_after_ch - bat_before_ch),  # negatief = laden
+                                    # charging = NEGATIVE verbruik
+                                    "energy_consumption": -charged_kwh,
                                 })
-                            
-                            # Deadhead block (material trip)
+
+                            # 2. deadhead_before block (material trip)
                             if a.deadhead_before is not None:
                                 from_loc, to_loc, dist_km, dep_dt, arr_dt = a.deadhead_before
                                 energy_deadhead = dist_km * pm.BusConstants.CONSUMPTION_PER_KM
@@ -282,8 +330,26 @@ elif page == "Planning Maker":
                                     "line": "",
                                     "energy_consumption": energy_deadhead,
                                 })
-                            
-                            # Service trip block (actual passenger trip)
+
+                            # 3. idle_before block (wachten tot rit start)
+                            idle_info = getattr(a, 'idle_before', None)
+                            if idle_info is not None:
+                                idle_start_dt, idle_end_dt, idle_energy_used = idle_info
+                                if idle_end_dt > idle_start_dt:
+                                    gantt_rows.append({
+                                        "bus": a.bus_id,
+                                        "activity": "idle",
+                                        "start_time": idle_start_dt.time(),
+                                        "end_time": idle_end_dt.time(),
+                                        "start_dt": idle_start_dt,
+                                        "end_dt": idle_end_dt,
+                                        "start_location": a.ride.start_stop,
+                                        "end_location": a.ride.start_stop,
+                                        "line": "",
+                                        "energy_consumption": idle_energy_used,
+                                    })
+
+                            # 4. service trip block (de echte rit met passagiers)
                             energy_service = a.ride.distance_km * pm.BusConstants.CONSUMPTION_PER_KM
                             gantt_rows.append({
                                 "bus": a.bus_id,
@@ -297,18 +363,44 @@ elif page == "Planning Maker":
                                 "line": a.ride.line,
                                 "energy_consumption": energy_service,
                             })
-                        
+
                         df_gantt = pd.DataFrame(gantt_rows)
-                        
+
                         # -----------------------------
-                        # 7. CHECKS / WARNINGS
+                        # 7. MAAK CHECKERINPUT-FORMAT
+                        # -----------------------------
+                        # Checker wil exact:
+                        # start_location, end_location, start_time, end_time,
+                        # activity, line, energy_consumption, bus
+                        #
+                        # en tijden als HH:MM:SS string.
+
+                        def to_hms(t):
+                            # t is een datetime.time
+                            return t.strftime("%H:%M:%S")
+
+                        checker_rows = []
+                        for row in gantt_rows:
+                            checker_rows.append({
+                                "start_location":   row["start_location"],
+                                "end_location":     row["end_location"],
+                                "start_time":       to_hms(row["start_time"]),
+                                "end_time":         to_hms(row["end_time"]),
+                                "activity":         row["activity"],
+                                "line":             row["line"],
+                                "energy_consumption": row["energy_consumption"],
+                                "bus":              row["bus"],
+                            })
+
+                        df_checker_input = pd.DataFrame(checker_rows)
+
+                        # -----------------------------
+                        # 8. CHECKS / WARNINGS
                         # -----------------------------
                         st.header("Planning Results")
                         
-                        # Markeer ritten waar batterij na afloop < 0% usable capacity
-                        # (dit is echt onmogelijk → planner kon geen geldige oplossing vinden)
+                        # impossible battery check (<0% usable)
                         def battery_after_pct_for_row(row):
-                            # vind bijhorende assignment
                             for a in assignments:
                                 if (
                                     a.bus_id == row["Bus_ID"] and
@@ -335,7 +427,7 @@ elif page == "Planning Maker":
                         else:
                             st.success("✅ No impossible battery states detected.")
                         
-                        # KPI blokje
+                        # KPIs
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             st.metric("Total Rides", len(df_planning))
@@ -351,13 +443,13 @@ elif page == "Planning Maker":
                             )
                         
                         # -----------------------------
-                        # 8. SHOW TABLE + GANTT
+                        # 9. SHOW TABLES + GANTT
                         # -----------------------------
                         st.subheader("Generated Planning (per ride)")
                         st.dataframe(df_planning, use_container_width=True)
                         
                         st.subheader("Gantt Chart of Generated Bus Plan")
-                        # create_gannt_chart verwacht kolommen bus/activity/start_time/end_time/... etc.
+                        # df_gantt heeft al de juiste kolommen voor Formulas.create_gannt_chart
                         fm.create_gannt_chart(df_gantt.rename(columns={
                             "bus": "bus",
                             "activity": "activity",
@@ -370,13 +462,18 @@ elif page == "Planning Maker":
                         }))
                         
                         # -----------------------------
-                        # 9. DOWNLOAD KNOP
+                        # 10. DOWNLOAD KNOP
                         # -----------------------------
+                        # We schrijven 3 tabs:
+                        # - Schedule (overzicht per rit)
+                        # - DetailedTimeline (gantt_rows rauw)
+                        # - CheckerInput (precies het format dat de Checker verwacht)
                         st.subheader("Download Planning")
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
                             df_planning.to_excel(writer, sheet_name='Schedule', index=False)
                             df_gantt.to_excel(writer, sheet_name='DetailedTimeline', index=False)
+                            df_checker_input.to_excel(writer, sheet_name='CheckerInput', index=False)
                         output.seek(0)
                         
                         st.download_button(
@@ -391,7 +488,6 @@ elif page == "Planning Maker":
             st.exception(e)
     else:
         st.info("Upload a timetable and distance matrix to start generating a bus planning!")
-
 
 # -------------------------------------------------
 # Page 3 - Advanced Options
@@ -462,6 +558,24 @@ elif page == "Advanced Options":
 # -------------------------------------------------
 elif page == "User Manual":
     st.title("User Manual", anchor='group 8')
+    st.write("""
+This tool has two main modules:
+
+1. Planning Maker
+   - Upload timetable + distance matrix
+   - Configure energy/charging settings
+   - Generate an operating plan with assigned buses
+   - Export that plan
+
+2. Planning Checker
+   - Upload a planning (use the 'CheckerInput' sheet from Planning Maker)
+   - Upload timetable + distance matrix
+   - Verify coverage, travel times, charging rules, and SOC
+   - Visualize full-day Gantt
+
+Workflow:
+DistanceMatrix.xlsx + Timetable.xlsx → Planning Maker → download Excel → upload 'CheckerInput' sheet into Planning Checker.
+""")
 
 
 # -------------------------------------------------
@@ -516,4 +630,4 @@ It checks if all routes are covered, whether each bus has sufficient charging ti
             ),
             unsafe_allow_html=True
         )
-
+# End of Tool.py
