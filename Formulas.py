@@ -621,14 +621,13 @@ def SOC_check(planning: pd.DataFrame, SOH, minbat, startbat):
                 "minimum_allowed (%)": round(first_row["min_battery (%)"], 1),
             })
 
-    # ---- Streamlit output ----
-    buses_in_trouble = {row["bus"] for row in first_violation_rows}
-    num_buses_in_trouble = len(buses_in_trouble)
+# ---- Streamlit output ----
+    total_violations = len(all_violations_rows)
 
-    if num_buses_in_trouble == 0:
-        st.success("✅ All buses stay above the minimal SOC limit")
+    if total_violations == 0:
+        st.success("✅ No violating moments detected — all buses stay above the minimum SOC limit.")
     else:
-        st.error(f"⚠️ {num_buses_in_trouble} bus(es) drop below the minimal SOC limit")
+        st.error(f"⚠️ There are {total_violations} violating moments detected across all buses.")
 
     # 1️⃣ Eerste overtreding per bus
     if first_violation_rows:
