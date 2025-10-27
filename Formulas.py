@@ -502,109 +502,165 @@ def SOC_periods(planning: pd.DataFrame) -> pd.DataFrame:
 def SOC_check(planning: pd.DataFrame, SOH, minbat, startbat):
     """
     Checks when the SOC drops below the allowed minimum.
-    Reports BOTH kWh and %.
+    Reports:
+    1. The first violating activity per bus (summary view)
+    2. All violating activities (detailed view)
 
-    SOH      = health of the battery in %
-    minbat   = minimale toegestane SOC in %
-    startbat = SOC aan het begin van de dag in %
+    - Violation = bus starts below limit OR crosses below during activity.
+    - Rides between 00:00–03:00 count as 'next day', so they appear last per bus.
     """
 
     capacity = 300  # nominale batterijcapaciteit in kWh
-    df = planning.copy().sort_values(['bus', 'start_time']).reset_index(drop=True)
 
-    # prepare columns
-    df['SOC (kWh)'] = np.nan
-    df['SOC (%)'] = np.nan
-    df['min_battery (kWh)'] = np.nan
-    df['min_battery (%)'] = np.nan
+    df = planning.copy()
 
-    for bus, group in df.groupby('bus'):
+    # --- Zorg dat tijdkolommen goed zijn ---
+    df["start_time"] = pd.to_datetime(df["start_time"], format="%H:%M:%S").dt.time
+    df["end_time"]   = pd.to_datetime(df["end_time"],   format="%H:%M:%S").dt.time
+
+    # Basisdag en helper voor nachtverschuiving
+    base_day = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
+
+    def to_shifted_dt(t: time):
+        dt = datetime.combine(base_day.date(), t)
+        if t < time(3, 0):  # alles vóór 03:00 telt als 'volgende dag'
+            dt += timedelta(days=1)
+        return dt
+
+    # Maak kolom voor correcte volgorde (nachtverschuiving)
+    df["start_dt_shifted"] = df["start_time"].apply(to_shifted_dt)
+    df = df.sort_values(["bus", "start_dt_shifted"]).reset_index(drop=True)
+
+    # Voor debug en berekeningen
+    df["SOC_start (kWh)"] = np.nan
+    df["SOC_start (%)"] = np.nan
+    df["SOC_after (kWh)"] = np.nan
+    df["SOC_after (%)"] = np.nan
+    df["min_battery (kWh)"] = np.nan
+    df["min_battery (%)"] = np.nan
+    df["violation"] = False
+
+    # Resultaten
+    first_violation_rows = []
+    all_violations_rows = []
+
+    # ---- Hoofdlus per bus ----
+    for bus, group in df.groupby("bus"):
         idxs = group.index
 
-        # effectieve max capaciteit met SOH
-        max_battery_kwh = (SOH / 100.0) * capacity   # bv 90% * 300 = 270 kWh bruikbaar
-
-        # start SOC in kWh
+        # Capaciteit & grenzen
+        max_battery_kwh = (SOH / 100.0) * capacity
         start_soc_kwh = (startbat / 100.0) * max_battery_kwh
-
-        # drempel in kWh
         min_soc_kwh = (minbat / 100.0) * max_battery_kwh
+        min_soc_pct = (min_soc_kwh / max_battery_kwh) * 100.0
 
-        usage = group['energy_consumption'].to_numpy()
+        usage = group["energy_consumption"].to_numpy()
 
-        # SOC in kWh aan het begin van elke activiteit
-        soc_kwh = np.empty(len(usage))
-        soc_kwh[0] = start_soc_kwh
-        soc_kwh[1:] = start_soc_kwh - np.cumsum(usage[:-1])
+        # SOC aan begin & eind
+        soc_start_kwh = np.empty(len(usage))
+        soc_start_kwh[0] = start_soc_kwh
+        soc_start_kwh[1:] = start_soc_kwh - np.cumsum(usage[:-1])
+        soc_after_kwh = soc_start_kwh - usage
 
-        # Zet SOC om naar %
-        soc_pct = (soc_kwh / max_battery_kwh) * 100.0
-        min_soc_pct = (min_soc_kwh / max_battery_kwh) * 100.0  # dit is in principe gelijk aan minbat, maar we rekenen 'm netjes uit
+        soc_start_pct = (soc_start_kwh / max_battery_kwh) * 100.0
+        soc_after_pct = (soc_after_kwh / max_battery_kwh) * 100.0
 
-        # schrijf de kolommen terug voor deze bus
-        df.loc[idxs, 'SOC (kWh)'] = soc_kwh
-        df.loc[idxs, 'SOC (%)'] = soc_pct
-        df.loc[idxs, 'min_battery (kWh)'] = min_soc_kwh
-        df.loc[idxs, 'min_battery (%)'] = min_soc_pct
+        # Schrijf terug in df
+        df.loc[idxs, "SOC_start (kWh)"] = soc_start_kwh
+        df.loc[idxs, "SOC_start (%)"] = soc_start_pct
+        df.loc[idxs, "SOC_after (kWh)"] = soc_after_kwh
+        df.loc[idxs, "SOC_after (%)"] = soc_after_pct
+        df.loc[idxs, "min_battery (kWh)"] = min_soc_kwh
+        df.loc[idxs, "min_battery (%)"] = min_soc_pct
 
-    # markeer waar het fout gaat
-    df['below_min_SOC'] = df['SOC (kWh)'] < df['min_battery (kWh)']
+        # Check violations
+        group_eval = df.loc[idxs].copy()
+        group_eval["violation"] = (
+            (group_eval["SOC_start (%)"] < group_eval["min_battery (%)"]) |
+            (
+                (group_eval["SOC_start (%)"] >= group_eval["min_battery (%)"]) &
+                (group_eval["SOC_after (%)"] < group_eval["min_battery (%)"])
+            )
+        )
 
-    # eerste probleemmoment per bus verzamelen
-    first_below_list = []
-    for bus, group in df.groupby('bus'):
-        bad_rows = group[group['below_min_SOC']]
-        if not bad_rows.empty:
-            first_row = bad_rows.iloc[0]
+        df.loc[idxs, "violation"] = group_eval["violation"].to_numpy()
+        bad_rows_all = group_eval[group_eval["violation"]]
 
-            first_below_list.append({
-                "bus": bus,
-                "time_when_SOC_too_low": first_row['start_time'],
-                "activity": first_row.get('activity', None),
-                "start_location": first_row.get('start_location', None),
-                "end_location": first_row.get('end_location', None),
-
-                # actuele SOC op dat moment
-                "SOC_at_that_time (kWh)": round(first_row['SOC (kWh)'], 2),
-                "SOC_at_that_time (%)": round(first_row['SOC (%)'], 1),
-
-                # ondergrens
-                "minimum_allowed (kWh)": round(first_row['min_battery (kWh)'], 2),
-                "minimum_allowed (%)": round(first_row['min_battery (%)'], 1),
+        # ---- Alle overtredingen per bus ----
+        for _, row in bad_rows_all.iterrows():
+            start_t = row["start_time"]
+            all_violations_rows.append({
+                "bus": row["bus"],
+                "time_when_SOC_too_low": start_t,
+                "activity": row.get("activity", None),
+                "start_location": row.get("start_location", None),
+                "end_location": row.get("end_location", None),
+                "SOC_at_start (kWh)": round(row["SOC_start (kWh)"], 2),
+                "SOC_at_start (%)": round(row["SOC_start (%)"], 1),
+                "SOC_after (kWh)": round(row["SOC_after (kWh)"], 2),
+                "SOC_after (%)": round(row["SOC_after (%)"], 1),
+                "minimum_allowed (kWh)": round(row["min_battery (kWh)"], 2),
+                "minimum_allowed (%)": round(row["min_battery (%)"], 1),
+                "_sort_key_dt": to_shifted_dt(start_t),  # nachtcorrectie
             })
 
-    if not first_below_list:
+        # ---- Eerste overtreding per bus ----
+        if not bad_rows_all.empty:
+            first_row = bad_rows_all.iloc[0]
+            first_violation_rows.append({
+                "bus": first_row["bus"],
+                "time_when_SOC_too_low": first_row["start_time"],
+                "activity": first_row.get("activity", None),
+                "start_location": first_row.get("start_location", None),
+                "end_location": first_row.get("end_location", None),
+                "SOC_at_start (kWh)": round(first_row["SOC_start (kWh)"], 2),
+                "SOC_at_start (%)": round(first_row["SOC_start (%)"], 1),
+                "SOC_after (kWh)": round(first_row["SOC_after (kWh)"], 2),
+                "SOC_after (%)": round(first_row["SOC_after (%)"], 1),
+                "minimum_allowed (kWh)": round(first_row["min_battery (kWh)"], 2),
+                "minimum_allowed (%)": round(first_row["min_battery (%)"], 1),
+            })
+
+    # ---- Streamlit output ----
+    buses_in_trouble = {row["bus"] for row in first_violation_rows}
+    num_buses_in_trouble = len(buses_in_trouble)
+
+    if num_buses_in_trouble == 0:
         st.success("✅ All buses stay above the minimal SOC limit")
     else:
-        st.error(f"⚠️ {len(first_below_list)} bus(es) drop below the minimal SOC limit")
+        st.error(f"⚠️ {num_buses_in_trouble} bus(es) drop below the minimal SOC limit")
 
-        detail_df = pd.DataFrame(first_below_list)
-        st.write("First moment where each bus violates SOC limit:")
-        st.dataframe(detail_df, use_container_width=True)
+    # 1️⃣ Eerste overtreding per bus
+    if first_violation_rows:
+        st.subheader("First violating activity per bus")
+        summary_df = pd.DataFrame(first_violation_rows)
+        st.dataframe(summary_df, use_container_width=True)
 
-        # optioneel: volledige timeline/debug
-        with st.expander("Show full SOC timeline per bus (debug)"):
-            soc_view = df[[
-                'bus',
-                'start_time',
-                'end_time',
-                'activity',
-                'SOC (kWh)',
-                'SOC (%)',
-                'min_battery (kWh)',
-                'min_battery (%)',
-                'below_min_SOC',
-                'start_location',
-                'end_location',
-                'energy_consumption'
-            ]]
-            # rond iets af voor leesbaarheid in debug view
-            soc_view['SOC (kWh)'] = soc_view['SOC (kWh)'].round(2)
-            soc_view['SOC (%)'] = soc_view['SOC (%)'].round(1)
-            soc_view['min_battery (kWh)'] = soc_view['min_battery (kWh)'].round(2)
-            soc_view['min_battery (%)'] = soc_view['min_battery (%)'].round(1)
+    # 2️⃣ Alle overtredingen, gesorteerd met nacht-correctie
+    if all_violations_rows:
+        with st.expander("All violating moments (bus can fail multiple times)"):
+            all_df = pd.DataFrame(all_violations_rows)
+            all_df = all_df.sort_values(["bus", "_sort_key_dt"]).reset_index(drop=True)
+            all_df_display = all_df.drop(columns=["_sort_key_dt"])
+            st.dataframe(all_df_display, use_container_width=True)
 
-            st.dataframe(soc_view, use_container_width=True)
+    # 3️⃣ Debug: volledige SOC-tijdlijn
+    with st.expander("Full SOC timeline per bus (debug)"):
+        debug_cols = [
+            "bus", "start_time", "end_time", "activity",
+            "SOC_start (kWh)", "SOC_start (%)",
+            "SOC_after (kWh)", "SOC_after (%)",
+            "min_battery (kWh)", "min_battery (%)",
+            "violation", "start_location", "end_location",
+            "energy_consumption"
+        ]
+        debug_view = df[debug_cols].copy()
+        for col in ["SOC_start (kWh)", "SOC_after (kWh)", "min_battery (kWh)"]:
+            debug_view[col] = debug_view[col].round(2)
+        for col in ["SOC_start (%)", "SOC_after (%)", "min_battery (%)"]:
+            debug_view[col] = debug_view[col].round(1)
+        st.dataframe(debug_view, use_container_width=True)
+
 
 
 
