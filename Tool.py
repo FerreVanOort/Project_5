@@ -1,7 +1,6 @@
 ## Main tool
 
 # Imports
-
 from fileinput import filename
 import Formulas as fm
 import PlanningMaker as pm
@@ -30,14 +29,66 @@ if "idle_usage" not in st.session_state:
     st.session_state.idle_usage = 5.0
 if "charging_speed" not in st.session_state:
     st.session_state.charging_speed = 450.0
-if "SOH" not in st.session_state:
+if "soh" not in st.session_state:
     st.session_state.soh = 90.0
 if "minbat" not in st.session_state:
     st.session_state.minbat = 10.0
 if "startbat" not in st.session_state:
     st.session_state.startbat = 100.0
-    
+
+
+# -------------------------------------------------
+# Helper functie voor About Us kaartjes
+# -------------------------------------------------
+BASE_DIR = Path(__file__).parent
+IMG_DIR = BASE_DIR / "images"   # map waar je afbeeldingen staan
+
+def team_member(filename: str, name: str, linkedin_url: str):
+    """
+    Bouwt een HTML-kaartje met foto + naam + LinkedIn.
+    Verwacht dat er in ./images/ een bestand staat met de gegeven filename.
+    """
+    p = IMG_DIR / filename  # bv. images/fea.jpg
+    try:
+        img_bytes = p.read_bytes()
+    except Exception as e:
+        st.error(f"Kon afbeelding niet laden: {p} ({e})")
+        return ""
+
+    # Kies juiste MIME-type
+    ext = p.suffix.lower()
+    mime = "image/png" if ext == ".png" else "image/jpeg"
+
+    b64 = base64.b64encode(img_bytes).decode("utf-8")
+
+    return f"""
+    <div style="
+        background-color:#6e6e6e;
+        padding:15px;
+        border-style:solid;
+        border-width:2px;
+        border-color:#404040;
+        border-radius:10px;
+        text-align:center;
+        ">
+        <img src="data:{mime};base64,{b64}"
+            style="border-radius:50%;
+                width:120px;
+                height:120px;
+                object-fit:cover;
+                margin-bottom:10px;">
+        <h5 style="color:white; margin:0; margin-bottom:8px;">{name}</h5>
+        <a href="{linkedin_url}" target="_blank"
+            style="text-decoration:none; color:#0077b5; font-weight:bold;">
+            LinkedIn
+        </a>
+    </div>
+    """
+
+
+# -------------------------------------------------
 # Page 1 - Planning Checker
+# -------------------------------------------------
 if page == "Planning Checker":
     st.title("Prototype Group 8 - Bus Planning Check", anchor='group 8')
     
@@ -98,7 +149,7 @@ if page == "Planning Checker":
                 startbat = st.session_state.startbat
             )
             
-            # --- Gannt Chart ---
+            # --- Gantt Chart ---
             st.header("Gannt Chart of uploaded Bus Plan")
             fm.create_gannt_chart(planning_energy)
             
@@ -107,9 +158,11 @@ if page == "Planning Checker":
         
     else:
         st.info("Upload a bus plan, timetable, and distance matrix to start!")
-        
 
-# Page 2 - Schedule Builder
+
+# -------------------------------------------------
+# Page 2 - Planning Maker
+# -------------------------------------------------
 elif page == "Planning Maker":
     st.title("Prototype Group 8 - Bus Planning Maker", anchor='group 8')
     
@@ -129,10 +182,16 @@ elif page == "Planning Maker":
             col1, col2 = st.columns(2)
             
             with col1:
-                charging_station = st.text_input("Charging Station Name", value="ehvgar", 
-                                                help="Name of charging station (must match distance matrix)")
-                garage_location = st.text_input("Garage Location Name", value="ehvgar",
-                                               help="Where buses start from (must match distance matrix)")
+                charging_station = st.text_input(
+                    "Charging Station Name",
+                    value="ehvgar", 
+                    help="Name of charging station (must match distance matrix)"
+                )
+                garage_location = st.text_input(
+                    "Garage Location Name",
+                    value="ehvgar",
+                    help="Where buses start from (must match distance matrix)"
+                )
             
             with col2:
                 st.info("**Battery Settings**")
@@ -166,8 +225,12 @@ elif page == "Planning Maker":
                         
                         # Step 4: Create initial bus fleet
                         initial_buses = [
-                            pm.Bus("BUS_1", garage_location, pm.BusConstants.BATTERY_CAPACITY, 
-                                rides[0].start_time - timedelta(hours=1))
+                            pm.Bus(
+                                "BUS_1",
+                                garage_location,
+                                pm.BusConstants.BATTERY_CAPACITY, 
+                                rides[0].start_time - timedelta(hours=1)
+                            )
                         ]
                         
                         # Step 5: Schedule all rides
@@ -185,7 +248,9 @@ elif page == "Planning Maker":
                                 'End_Location': assignment.ride.end_stop,
                                 'Start_Time': assignment.ride.start_time,
                                 'End_Time': assignment.ride.end_time,
-                                'Battery_Charge_After_Ride': round(assignment.battery_after / pm.BusConstants.BATTERY_CAPACITY * 100, 1),
+                                'Battery_Charge_After_Ride': round(
+                                    assignment.battery_after / pm.BusConstants.BATTERY_CAPACITY * 100, 1
+                                ),
                             }
                             schedule_data.append(row)
                         
@@ -249,13 +314,25 @@ elif page == "Planning Maker":
                             with col1:
                                 st.write(f"**Bus:** {problem_assignment.bus_id}")
                                 st.write(f"**Route:** {problem_assignment.ride.start_stop} → {problem_assignment.ride.end_stop}")
-                                st.write(f"**Time:** {problem_assignment.ride.start_time.strftime('%H:%M')} → {problem_assignment.ride.end_time.strftime('%H:%M')}")
+                                st.write(
+                                    f"**Time:** {problem_assignment.ride.start_time.strftime('%H:%M')} → "
+                                    f"{problem_assignment.ride.end_time.strftime('%H:%M')}"
+                                )
                                 st.write(f"**Distance:** {problem_assignment.ride.distance_km:.2f} km")
                             
                             with col2:
-                                st.write(f"**Battery before:** {problem_assignment.battery_before:.2f} kWh ({problem_assignment.battery_before/pm.BusConstants.BATTERY_CAPACITY*100:.1f}%)")
-                                st.write(f"**Battery after:** {problem_assignment.battery_after:.2f} kWh ({problem_assignment.battery_after/pm.BusConstants.BATTERY_CAPACITY*100:.1f}%)")
-                                st.write(f"**Energy needed:** {problem_assignment.ride.distance_km * pm.BusConstants.CONSUMPTION_PER_KM:.2f} kWh")
+                                st.write(
+                                    f"**Battery before:** {problem_assignment.battery_before:.2f} kWh "
+                                    f"({problem_assignment.battery_before/pm.BusConstants.BATTERY_CAPACITY*100:.1f}%)"
+                                )
+                                st.write(
+                                    f"**Battery after:** {problem_assignment.battery_after:.2f} kWh "
+                                    f"({problem_assignment.battery_after/pm.BusConstants.BATTERY_CAPACITY*100:.1f}%)"
+                                )
+                                st.write(
+                                    f"**Energy needed:** "
+                                    f"{problem_assignment.ride.distance_km * pm.BusConstants.CONSUMPTION_PER_KM:.2f} kWh"
+                                )
                             
                             if problem_assignment.charging_before:
                                 st.info("**Charging session detected:**")
@@ -263,7 +340,9 @@ elif page == "Planning Maker":
                                 st.write(f"- Arrival at charger: {arrival.strftime('%H:%M')}")
                                 st.write(f"- Departure from charger: {departure.strftime('%H:%M')}")
                                 st.write(f"- Charged from {before:.2f} kWh to {after:.2f} kWh")
-                                st.write(f"- Charging duration: {(departure-arrival).total_seconds()/60:.1f} minutes")
+                                st.write(
+                                    f"- Charging duration: {(departure-arrival).total_seconds()/60:.1f} minutes"
+                                )
                             else:
                                 st.warning("**No charging session before this ride**")
                             
@@ -272,7 +351,9 @@ elif page == "Planning Maker":
                                 st.info("**Deadhead trip detected:**")
                                 st.write(f"- Route: {from_loc} → {to_loc}")
                                 st.write(f"- Distance: {dist:.2f} km")
-                                st.write(f"- Energy used: {dist * pm.BusConstants.CONSUMPTION_PER_KM:.2f} kWh")
+                                st.write(
+                                    f"- Energy used: {dist * pm.BusConstants.CONSUMPTION_PER_KM:.2f} kWh"
+                                )
                             else:
                                 st.info("**No deadhead trip before this ride**")
                         
@@ -284,9 +365,12 @@ elif page == "Planning Maker":
                             st.metric("Buses Used", df_planning['Bus_ID'].nunique())
                         with col3:
                             min_battery = df_planning['Battery_Charge_After_Ride'].min()
-                            st.metric("Minimum Battery", f"{min_battery}%", 
-                                     delta="OK" if min_battery >= 10 else "CRITICAL",
-                                     delta_color="normal" if min_battery >= 10 else "inverse")
+                            st.metric(
+                                "Minimum Battery",
+                                f"{min_battery}%", 
+                                delta="OK" if min_battery >= 10 else "CRITICAL",
+                                delta_color="normal" if min_battery >= 10 else "inverse"
+                            )
                         
                         # --- Show planning table ---
                         st.subheader("Generated Planning")
@@ -316,9 +400,11 @@ elif page == "Planning Maker":
         
     else:
         st.info("Upload a timetable and distance matrix to start generating a bus planning!")
-        
 
+
+# -------------------------------------------------
 # Page 3 - Advanced Options
+# -------------------------------------------------
 elif page == "Advanced Options":
     st.title("Advanced Options", anchor='group 8')
     st.markdown("Change values to impact energy usage")
@@ -380,85 +466,63 @@ elif page == "Advanced Options":
     st.info("⚙️ These options are automatically implemented in the calculations about the bus plan.")
 
 
+# -------------------------------------------------
 # Page 4 - User Manual
+# -------------------------------------------------
 elif page == "User Manual":
     st.title("User Manual", anchor='group 8')
 
 
+# -------------------------------------------------
 # Page 5 - About Us
+# -------------------------------------------------
 elif page == "About Us":
     st.title("About Us", anchor='group 8')
     st.header('The team')
-    st.write("""We are a team of enthusiastic students - Ferre, Mirthe and Fea - from Eindhoven, studying Applied mathematics at the Fontys University of Applied Sciences. Ferre takes the lead in dividing the tasks and ensuring everything runs smoothly. Ferre also focuses on coding the planning maker, while Fea is responsible for coding the planning checker. Mirthe is responsible for the streamlit interface. Together, we bring our unique skills and perspectives to create innovative solutions in the field of applied mathematics.""")
+    st.write("""
+We are a team of enthusiastic students - Ferre, Mirthe and Fea - from Eindhoven, studying Applied mathematics at the Fontys University of Applied Sciences. Ferre takes the lead in dividing the tasks and ensuring everything runs smoothly. Ferre also focuses on coding the planning maker, while Fea is responsible for coding the planning checker. Mirthe is responsible for the streamlit interface. Together, we bring our unique skills and perspectives to create innovative solutions in the field of applied mathematics.
+""")
+
     st.header('Project Planning Checker and Maker for Electric Bus Fleets')
-    st.write("""The PlanningChecker verifies whether your bus schedule is complete and accurate. Whether you’re new to this type of software or already experienced, the tool helps you evaluate and improve your planning.
+    st.write("""
+The PlanningChecker verifies whether your bus schedule is complete and accurate. Whether you’re new to this type of software or already experienced, the tool helps you evaluate and improve your planning.
 
 With the growing shift toward electric buses, scheduling now involves stricter requirements. PlanningChecker ensures that each bus plan complies with these modern standards.
 
-It checks if all routes are covered, whether each bus has sufficient charging time (at least 15 minutes), and if any bus’s State of Charge (SOC) drops below the allowed minimum. If any conditions aren’t met, PlanningChecker clearly indicates where the issues occur, making it easier for planners to identify problems, correct them efficiently, and reduce errors in the overall scheduling process.""")
-    
-
+It checks if all routes are covered, whether each bus has sufficient charging time (at least 15 minutes), and if any bus’s State of Charge (SOC) drops below the allowed minimum. If any conditions aren’t met, PlanningChecker clearly indicates where the issues occur, making it easier for planners to identify problems, correct them efficiently, and reduce errors in the overall scheduling process.
+""")
 
     st.header("Meet the team")
 
-    BASE_DIR = Path(__file__).parent
-    IMG_DIR = BASE_DIR / "images"   # map waar je afbeeldingen staan
+    col1, col2, col3 = st.columns(3)
 
-    def team_member(filename: str, name: str, linkedin_url: str):
-        p = IMG_DIR / filename  # bv. images/fea.jpg
-        try:
-            img_bytes = p.read_bytes()
-        except Exception as e:
-            st.error(f"Kon afbeelding niet laden: {p} ({e})")
-            return ""
-
-    # Kies juiste MIME-type
-        ext = p.suffix.lower()
-        mime = "image/png" if ext == ".png" else "image/jpeg"
-
-        b64 = base64.b64encode(img_bytes).decode("utf-8")
-
-        return f"""
-        <div style="
-            background-color:#6e6e6e;
-            padding:15px;
-            border-style:solid;
-            border-width:2px;
-            border-color:#404040;
-            border-radius:10px;
-            text-align:center;
-            ">
-            <img src="data:{mime};base64,{b64}"
-                style="border-radius:50%;
-                    width:120px;
-                    height:120px;
-                    object-fit:cover;
-                    margin-bottom:10px;">
-            <h5 style="color:white;">{name}</h5>
-            <a href="{linkedin_url}" target="_blank"
-                style="text-decoration:none; color:#0077b5; font-weight:bold;">
-                LinkedIn
-            </a>
-        </div>
-        """
-
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    st.markdown(
-        team_member("fea.jpg", "Fea Sanders",
-                    "https://www.linkedin.com/in/fea-sanders-04626b24b"),
-        unsafe_allow_html=True
+    with col1:
+        st.markdown(
+            team_member(
+                "fea.jpg",
+                "Fea Sanders",
+                "https://www.linkedin.com/in/fea-sanders-04626b24b"
+            ),
+            unsafe_allow_html=True
         )
-with col2:
-    st.markdown(
-        team_member("ferre.jpg", "Ferre van Oort",
-                    "https://www.linkedin.com/in/ferrevanoort"),
-        unsafe_allow_html=True
+
+    with col2:
+        st.markdown(
+            team_member(
+                "ferre.jpg",
+                "Ferre van Oort",
+                "https://www.linkedin.com/in/ferrevanoort"
+            ),
+            unsafe_allow_html=True
         )
-with col3:
-    st.markdown(
-        team_member("mirthe.jpg", "Mirthe Termeulen",
-                    "https://www.linkedin.com/in/mirthetermeulen"),
-        unsafe_allow_html=True
-         )
+
+    with col3:
+        st.markdown(
+            team_member(
+                "mirthe.jpg",
+                "Mirthe Termeulen",
+                "https://www.linkedin.com/in/mirthetermeulen"
+            ),
+            unsafe_allow_html=True
+        )
+
