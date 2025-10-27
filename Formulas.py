@@ -219,81 +219,126 @@ def fill_idle_periods(planning: pd.DataFrame, base_day: datetime = None):
     planning = planning.drop(columns=["start_dt", "end_dt"])  # optional
     
     return planning
-
 def create_gannt_chart(planning: pd.DataFrame, base_day: datetime = None):
     """
-    Input:
-        Bus planning as a Pandas DataFrame
-
-    Returns:
-        Gannt chart of given bus planning
+    Maakt een Gantt chart waarbij:
+    - service trip blokken een kleur krijgen per lijn (line 400, line 401, ...)
+    - charging / idle / material trip houden vaste kleuren
     """
-    
-    planning.copy()
-    
-    # If there's no base_day given → use todays date
+
+    planning = planning.copy()
+
+    # 1. base_day bepalen
     if base_day is None:
         base_day = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
-    
-    # Add planning_day
+
     planning["planning_day"] = base_day
-    
-    # Define cutoff: 00:00 - 03:00 to next day
+
+    # 2. ritten tussen 00:00 en 03:00 horen bij 'volgende dag'
     start_cutoff = datetime.strptime("00:00:00", "%H:%M:%S").time()
     end_cutoff   = datetime.strptime("03:00:00", "%H:%M:%S").time()
-    
-    mask_next_day = (planning["start_time"] >= start_cutoff) & (planning["start_time"] <= end_cutoff)
+
+    mask_next_day = (
+        (planning["start_time"] >= start_cutoff) &
+        (planning["start_time"] <= end_cutoff)
+    )
     planning.loc[mask_next_day, "planning_day"] += pd.Timedelta(days=1)
-    
-    # Combine start and end time with the right date
-    planning["start_dt"] = planning.apply(lambda row: datetime.combine(row["planning_day"].date(), row["start_time"]), axis=1)
-    planning["end_dt"]   = planning.apply(lambda row: datetime.combine(row["planning_day"].date(), row["end_time"]), axis=1)
-    
-    # Optional: night-transition processed as end < start
+
+    # 3. combineer datum + tijd
+    planning["start_dt"] = planning.apply(
+        lambda row: datetime.combine(row["planning_day"].date(), row["start_time"]),
+        axis=1
+    )
+    planning["end_dt"] = planning.apply(
+        lambda row: datetime.combine(row["planning_day"].date(), row["end_time"]),
+        axis=1
+    )
+
+    # fix nachtovergang
     planning["end_dt"] = planning["end_dt"].where(
         planning["end_dt"] >= planning["start_dt"],
         planning["end_dt"] + timedelta(days=1)
     )
-    
-    # Calculate length in minutes
-    planning["duration_min"] = (planning["end_dt"] - planning["start_dt"]).dt.total_seconds() / 60
-    
-    
-    # Create Gantt chart
-    color_map = {
-        "service trip": "blue",
-        "material trip": "orange",
+
+    # 4. duur in minuten
+    planning["duration_min"] = (
+        planning["end_dt"] - planning["start_dt"]
+    ).dt.total_seconds() / 60.0
+
+    # 5. display_group bepalen (dit gaat de kleur bepalen)
+    #    - service trip → kleur per lijn (bv. "line 400")
+    #    - anders gewoon activity ("charging", "idle", ...)
+    def _pick_display_group(row):
+        if row["activity"] == "service trip":
+            if "line" in row and pd.notna(row["line"]) and str(row["line"]).strip() != "":
+                return f"line {row['line']}"
+            else:
+                return "service trip (unknown line)"
+        else:
+            return row["activity"]
+
+    planning["display_group"] = planning.apply(_pick_display_group, axis=1)
+
+    # 6. colormap maken
+    # vaste kleuren voor niet-service trip dingen
+    base_colors = {
+        "charging": "green",
         "idle": "gray",
-        "charging": "green"
+        "material trip": "orange",
+        "service trip (unknown line)": "blue",  # fallback
     }
-    
+
+    # kleurenlijstje om langs te cyclen voor lijnen
+    palette_cycle = [
+        "magenta", "blue", "red", "brown", "pink", "cyan", "olive", "purple"
+    ]
+
+    color_map = dict(base_colors)
+
+    line_groups = [
+        g for g in planning["display_group"].unique()
+        if isinstance(g, str) and g.startswith("line ")
+    ]
+
+    for idx, g in enumerate(line_groups):
+        color_map[g] = palette_cycle[idx % len(palette_cycle)]
+
+    # 7. plotly timeline
     fig = px.timeline(
         planning,
         x_start="start_dt",
         x_end="end_dt",
         y="bus",
-        color="activity",
-        color_discrete_map = color_map,
-        hover_data=["start_time", "end_time", "activity"]
+        color="display_group",            # <-- niet meer 'activity'
+        color_discrete_map=color_map,
+        hover_data=[
+            "activity",
+            "line",
+            "start_time",
+            "end_time",
+            "duration_min",
+            "start_location",
+            "end_location",
+            "energy_consumption",
+        ]
     )
-    
-    # Y-axis: reverse to match typical Gantt chart style
+
+    # y-as omdraaien voor Gantt-stijl
     fig.update_yaxes(autorange="reversed")
-    
-    # X-axis: show only hours and minutes
+
+    # x-as op HH:MM
     fig.update_xaxes(tickformat="%H:%M")
-    
-    # Layout tweaks
+
+    # layout
     fig.update_layout(
         title="Bus Planning Gantt Chart",
         xaxis_title="Time of Day",
         yaxis_title="Bus",
-        legend_title="Activity",
+        legend_title="Line / Activity",
         height=600,
         width=2000
     )
-    
-    # fig.show()
+
     return st.plotly_chart(fig)
 
 def ensure_time_column(df: pd.DataFrame, column):
