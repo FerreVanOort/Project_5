@@ -37,54 +37,6 @@ if "startbat" not in st.session_state:
     st.session_state.startbat = 100.0
 
 
-# -------------------------------------------------
-# Helper functie voor About Us kaartjes
-# -------------------------------------------------
-BASE_DIR = Path(__file__).parent
-IMG_DIR = BASE_DIR / "images"   # map waar je afbeeldingen staan
-
-def team_member(filename: str, name: str, linkedin_url: str):
-    """
-    Bouwt een HTML-kaartje met foto + naam + LinkedIn.
-    Verwacht dat er in ./images/ een bestand staat met de gegeven filename.
-    """
-    p = IMG_DIR / filename  # bv. images/fea.jpg
-    try:
-        img_bytes = p.read_bytes()
-    except Exception as e:
-        st.error(f"Kon afbeelding niet laden: {p} ({e})")
-        return ""
-
-    # Kies juiste MIME-type
-    ext = p.suffix.lower()
-    mime = "image/png" if ext == ".png" else "image/jpeg"
-
-    b64 = base64.b64encode(img_bytes).decode("utf-8")
-
-    return f"""
-    <div style="
-        background-color:#6e6e6e;
-        padding:15px;
-        border-style:solid;
-        border-width:2px;
-        border-color:#404040;
-        border-radius:10px;
-        text-align:center;
-        ">
-        <img src="data:{mime};base64,{b64}"
-            style="border-radius:50%;
-                width:120px;
-                height:120px;
-                object-fit:cover;
-                margin-bottom:10px;">
-        <h5 style="color:white; margin:0; margin-bottom:8px;">{name}</h5>
-        <a href="{linkedin_url}" target="_blank"
-            style="text-decoration:none; color:#0077b5; font-weight:bold;">
-            LinkedIn
-        </a>
-    </div>
-    """
-
 
 # -------------------------------------------------
 # Page 1 - Planning Checker
@@ -194,197 +146,237 @@ elif page == "Planning Maker":
                 )
             
             with col2:
-                st.info("**Battery Settings**")
-                st.write(f"Battery Capacity: {pm.BusConstants.BATTERY_CAPACITY} kWh")
-                st.write(f"Min Battery: {pm.BusConstants.MIN_BATTERY_PERCENT*100}%")
-                st.write(f"Consumption: {pm.BusConstants.CONSUMPTION_PER_KM} kW/km")
+                st.info("⚡ Battery & energy settings (from Advanced Options)")
+                usable_cap = 300 * (st.session_state.soh / 100.0)
+                st.write(f"Nominal pack: 300 kWh")
+                st.write(f"SOH: {st.session_state.soh:.1f}% → usable ≈ {usable_cap:.1f} kWh")
+                st.write(f"Start SOC: {st.session_state.startbat:.1f}% of usable")
+                st.write(f"Min SOC: {st.session_state.minbat:.1f}% of usable")
+                st.write(f"Drive consumption: {st.session_state.driving_usage:.2f} kWh/km")
+                st.write(f"Charging power: {st.session_state.charging_speed:.1f} kW")
+                st.write("Charging only allowed at garage, min 15 min session.")
             
             # --- Generate Planning Button ---
             if st.button("Generate Bus Planning", type="primary"):
-                with st.spinner("Generating optimal bus planning..."):
+                
+                # -----------------------------
+                # 1. SYNC PARAMETERS NAAR pm.BusConstants
+                # -----------------------------
+                pm.BusConstants.SOH_PERCENT        = st.session_state.soh
+                pm.BusConstants.START_BAT_PERCENT  = st.session_state.startbat
+                pm.BusConstants.MIN_BAT_PERCENT    = st.session_state.minbat
+                pm.BusConstants.CHARGING_POWER_KW  = st.session_state.charging_speed
+                pm.BusConstants.CONSUMPTION_PER_KM = st.session_state.driving_usage
+                pm.BusConstants.IDLE_USAGE_KW      = st.session_state.idle_usage
+                pm.BusConstants.GARAGE_NAME        = garage_location  # bv. "ehvgar"
+                
+                with st.spinner("Generating bus planning..."):
                     
-                    # Step 1: Load distance matrix
+                    # -----------------------------
+                    # 2. LOAD / PARSE INPUT DATA
+                    # -----------------------------
                     st.write("📊 Loading distance matrix...")
                     loader = pm.DataLoader()
                     distance_dict, time_dict, distance_df = loader.load_distance_matrix_from_df(distancematrix_build)
                     
-                    # Step 2: Load timetable
                     st.write("📅 Loading timetable...")
                     rides = loader.load_timetable_from_df(timetable_build, distance_df)
                     
                     if not rides:
                         st.error("❌ No rides could be loaded from timetable!")
                     else:
-                        st.success(f"✅ Loaded {len(rides)} rides")
+                        st.success(f"✅ Loaded {len(rides)} rides from timetable")
                         
-                        # Step 3: Create planning objects
+                        # -----------------------------
+                        # 3. INIT PLANNING OBJECTS
+                        # -----------------------------
                         st.write("🔧 Initializing planning system...")
                         distance_matrix = pm.DistanceMatrix(distance_dict, time_dict)
                         charging_planner = pm.ChargingPlanner(charging_station)
                         scheduler = pm.BusScheduler(distance_matrix, charging_planner, garage_location)
                         
-                        # Step 4: Create initial bus fleet
+                        # -----------------------------
+                        # 4. INIT FLEET / START BUS
+                        # -----------------------------
+                        first_start_time = min(r.start_time for r in rides)
                         initial_buses = [
                             pm.Bus(
-                                "BUS_1",
-                                garage_location,
-                                pm.BusConstants.BATTERY_CAPACITY, 
-                                rides[0].start_time - timedelta(hours=1)
+                                bus_id="BUS_1",
+                                current_location=garage_location,
+                                battery_kwh=pm.BusConstants.start_energy_kwh(),
+                                current_time=first_start_time - timedelta(hours=1),
+                                history=[]
                             )
                         ]
                         
-                        # Step 5: Schedule all rides
-                        st.write("🚌 Scheduling rides...")
+                        # -----------------------------
+                        # 5. SCHEDULE ALL RIDES
+                        # -----------------------------
+                        st.write("🚌 Scheduling rides to buses...")
                         assignments = scheduler.schedule_all_rides(rides, initial_buses)
                         
-                        st.success(f"✅ Planning complete! {len(assignments)} rides scheduled")
+                        st.success(f"✅ Planning complete! {len(assignments)} rides processed")
                         
-                        # --- Create output dataframe for display ---
-                        schedule_data = []
-                        for assignment in assignments:
-                            row = {
-                                'Bus_ID': assignment.bus_id,
-                                'Start_Location': assignment.ride.start_stop,
-                                'End_Location': assignment.ride.end_stop,
-                                'Start_Time': assignment.ride.start_time,
-                                'End_Time': assignment.ride.end_time,
-                                'Battery_Charge_After_Ride': round(
-                                    assignment.battery_after / pm.BusConstants.BATTERY_CAPACITY * 100, 1
-                                ),
-                            }
-                            schedule_data.append(row)
+                        # -----------------------------
+                        # 6. BOUW TABELLEN VOOR WEERGAVE
+                        # -----------------------------
+                        usable_cap_after_soh = pm.BusConstants.usable_capacity_kwh()
                         
-                        df_planning = pd.DataFrame(schedule_data)
-                        
-                        # --- Create detailed dataframe for Gantt chart ---
-                        gantt_data = []
-                        for assignment in assignments:
-                            # Add charging activity if present
-                            if assignment.charging_before:
-                                arrival, departure, before, after = assignment.charging_before
-                                gantt_data.append({
-                                    'bus': assignment.bus_id,
-                                    'activity': 'charging',
-                                    'start_time': arrival.time(),
-                                    'end_time': departure.time(),
-                                    'start_dt': arrival,
-                                    'end_dt': departure
-                                })
+                        schedule_rows = []
+                        for a in assignments:
+                            pct_before = (
+                                a.battery_before / usable_cap_after_soh * 100.0
+                                if usable_cap_after_soh > 0 else float("nan")
+                            )
+                            pct_after = (
+                                a.battery_after / usable_cap_after_soh * 100.0
+                                if usable_cap_after_soh > 0 else float("nan")
+                            )
                             
-                            # Add deadhead trip if present
-                            if assignment.deadhead_before:
-                                from_loc, to_loc, dist, dep, arr = assignment.deadhead_before
-                                gantt_data.append({
-                                    'bus': assignment.bus_id,
-                                    'activity': 'material trip',
-                                    'start_time': dep.time(),
-                                    'end_time': arr.time(),
-                                    'start_dt': dep,
-                                    'end_dt': arr
-                                })
-                            
-                            # Add service trip (the actual ride)
-                            gantt_data.append({
-                                'bus': assignment.bus_id,
-                                'activity': 'service trip',
-                                'start_time': assignment.ride.start_time.time(),
-                                'end_time': assignment.ride.end_time.time(),
-                                'start_dt': assignment.ride.start_time,
-                                'end_dt': assignment.ride.end_time
+                            schedule_rows.append({
+                                "Bus_ID": a.bus_id,
+                                "Line": a.ride.line,
+                                "Start_Location": a.ride.start_stop,
+                                "End_Location": a.ride.end_stop,
+                                "Start_Time": a.ride.start_time.strftime("%H:%M"),
+                                "End_Time": a.ride.end_time.strftime("%H:%M"),
+                                "Battery_Before_[%usable]": round(pct_before, 1),
+                                "Battery_After_[%usable]": round(pct_after, 1),
                             })
                         
-                        df_gantt = pd.DataFrame(gantt_data)
+                        df_planning = pd.DataFrame(schedule_rows)
                         
-                        # --- DEBUG: Check for negative batteries ---
+                        gantt_rows = []
+                        for a in assignments:
+                            # Charging block (before ride)
+                            if a.charging_before is not None:
+                                charge_arrival_dt, charge_leave_dt, bat_before_ch, bat_after_ch = a.charging_before
+                                
+                                gantt_rows.append({
+                                    "bus": a.bus_id,
+                                    "activity": "charging",
+                                    "start_time": charge_arrival_dt.time(),
+                                    "end_time": charge_leave_dt.time(),
+                                    "start_dt": charge_arrival_dt,
+                                    "end_dt": charge_leave_dt,
+                                    "start_location": pm.BusConstants.GARAGE_NAME,
+                                    "end_location": pm.BusConstants.GARAGE_NAME,
+                                    "line": "",
+                                    "energy_consumption": -(bat_after_ch - bat_before_ch),  # negatief = laden
+                                })
+                            
+                            # Deadhead block (material trip)
+                            if a.deadhead_before is not None:
+                                from_loc, to_loc, dist_km, dep_dt, arr_dt = a.deadhead_before
+                                energy_deadhead = dist_km * pm.BusConstants.CONSUMPTION_PER_KM
+                                
+                                gantt_rows.append({
+                                    "bus": a.bus_id,
+                                    "activity": "material trip",
+                                    "start_time": dep_dt.time(),
+                                    "end_time": arr_dt.time(),
+                                    "start_dt": dep_dt,
+                                    "end_dt": arr_dt,
+                                    "start_location": from_loc,
+                                    "end_location": to_loc,
+                                    "line": "",
+                                    "energy_consumption": energy_deadhead,
+                                })
+                            
+                            # Service trip block (actual passenger trip)
+                            energy_service = a.ride.distance_km * pm.BusConstants.CONSUMPTION_PER_KM
+                            gantt_rows.append({
+                                "bus": a.bus_id,
+                                "activity": "service trip",
+                                "start_time": a.ride.start_time.time(),
+                                "end_time": a.ride.end_time.time(),
+                                "start_dt": a.ride.start_time,
+                                "end_dt": a.ride.end_time,
+                                "start_location": a.ride.start_stop,
+                                "end_location": a.ride.end_stop,
+                                "line": a.ride.line,
+                                "energy_consumption": energy_service,
+                            })
+                        
+                        df_gantt = pd.DataFrame(gantt_rows)
+                        
+                        # -----------------------------
+                        # 7. CHECKS / WARNINGS
+                        # -----------------------------
                         st.header("Planning Results")
                         
-                        negative_batteries = df_planning[df_planning['Battery_Charge_After_Ride'] < 0]
-                        if not negative_batteries.empty:
-                            st.error(f"⚠️ WARNING: {len(negative_batteries)} rides have negative battery!")
-                            
-                            with st.expander("Show rides with negative battery"):
-                                st.dataframe(negative_batteries)
-                            
-                            # Show detailed info for first problematic ride
-                            st.subheader("Debug Info: First Problematic Ride")
-                            problem_idx = negative_batteries.index[0]
-                            problem_assignment = assignments[problem_idx]
-                            
-                            col1, col2 = st.columns(2)
-                            with col1:
-                                st.write(f"**Bus:** {problem_assignment.bus_id}")
-                                st.write(f"**Route:** {problem_assignment.ride.start_stop} → {problem_assignment.ride.end_stop}")
-                                st.write(
-                                    f"**Time:** {problem_assignment.ride.start_time.strftime('%H:%M')} → "
-                                    f"{problem_assignment.ride.end_time.strftime('%H:%M')}"
-                                )
-                                st.write(f"**Distance:** {problem_assignment.ride.distance_km:.2f} km")
-                            
-                            with col2:
-                                st.write(
-                                    f"**Battery before:** {problem_assignment.battery_before:.2f} kWh "
-                                    f"({problem_assignment.battery_before/pm.BusConstants.BATTERY_CAPACITY*100:.1f}%)"
-                                )
-                                st.write(
-                                    f"**Battery after:** {problem_assignment.battery_after:.2f} kWh "
-                                    f"({problem_assignment.battery_after/pm.BusConstants.BATTERY_CAPACITY*100:.1f}%)"
-                                )
-                                st.write(
-                                    f"**Energy needed:** "
-                                    f"{problem_assignment.ride.distance_km * pm.BusConstants.CONSUMPTION_PER_KM:.2f} kWh"
-                                )
-                            
-                            if problem_assignment.charging_before:
-                                st.info("**Charging session detected:**")
-                                arrival, departure, before, after = problem_assignment.charging_before
-                                st.write(f"- Arrival at charger: {arrival.strftime('%H:%M')}")
-                                st.write(f"- Departure from charger: {departure.strftime('%H:%M')}")
-                                st.write(f"- Charged from {before:.2f} kWh to {after:.2f} kWh")
-                                st.write(
-                                    f"- Charging duration: {(departure-arrival).total_seconds()/60:.1f} minutes"
-                                )
-                            else:
-                                st.warning("**No charging session before this ride**")
-                            
-                            if problem_assignment.deadhead_before:
-                                from_loc, to_loc, dist, dep, arr = problem_assignment.deadhead_before
-                                st.info("**Deadhead trip detected:**")
-                                st.write(f"- Route: {from_loc} → {to_loc}")
-                                st.write(f"- Distance: {dist:.2f} km")
-                                st.write(
-                                    f"- Energy used: {dist * pm.BusConstants.CONSUMPTION_PER_KM:.2f} kWh"
-                                )
-                            else:
-                                st.info("**No deadhead trip before this ride**")
+                        # Markeer ritten waar batterij na afloop < 0% usable capacity
+                        # (dit is echt onmogelijk → planner kon geen geldige oplossing vinden)
+                        def battery_after_pct_for_row(row):
+                            # vind bijhorende assignment
+                            for a in assignments:
+                                if (
+                                    a.bus_id == row["Bus_ID"] and
+                                    a.ride.start_time.strftime("%H:%M") == row["Start_Time"] and
+                                    a.ride.end_time.strftime("%H:%M") == row["End_Time"]
+                                ):
+                                    if usable_cap_after_soh > 0:
+                                        return a.battery_after / usable_cap_after_soh * 100.0
+                                    else:
+                                        return float("nan")
+                            return float("nan")
                         
-                        # --- Show statistics ---
+                        df_planning["Battery_After_[%usable]_calc"] = df_planning.apply(
+                            battery_after_pct_for_row,
+                            axis=1
+                        )
+                        negative_mask = df_planning["Battery_After_[%usable]_calc"] < 0
+                        negative_batteries = df_planning[negative_mask]
+                        
+                        if not negative_batteries.empty:
+                            st.error(f"⚠️ WARNING: {len(negative_batteries)} rides have impossible battery (<0%).")
+                            with st.expander("Show problematic rides"):
+                                st.dataframe(negative_batteries, use_container_width=True)
+                        else:
+                            st.success("✅ No impossible battery states detected.")
+                        
+                        # KPI blokje
                         col1, col2, col3 = st.columns(3)
                         with col1:
                             st.metric("Total Rides", len(df_planning))
                         with col2:
                             st.metric("Buses Used", df_planning['Bus_ID'].nunique())
                         with col3:
-                            min_battery = df_planning['Battery_Charge_After_Ride'].min()
+                            min_battery_after = df_planning["Battery_After_[%usable]_calc"].min()
                             st.metric(
-                                "Minimum Battery",
-                                f"{min_battery}%", 
-                                delta="OK" if min_battery >= 10 else "CRITICAL",
-                                delta_color="normal" if min_battery >= 10 else "inverse"
+                                "Minimum Battery After Ride",
+                                f"{min_battery_after:.1f}%",
+                                delta="OK" if min_battery_after >= st.session_state.minbat else "CRITICAL",
+                                delta_color="normal" if min_battery_after >= st.session_state.minbat else "inverse"
                             )
                         
-                        # --- Show planning table ---
-                        st.subheader("Generated Planning")
+                        # -----------------------------
+                        # 8. SHOW TABLE + GANTT
+                        # -----------------------------
+                        st.subheader("Generated Planning (per ride)")
                         st.dataframe(df_planning, use_container_width=True)
                         
-                        # --- Gantt Chart ---
                         st.subheader("Gantt Chart of Generated Bus Plan")
-                        fm.create_gannt_chart(df_gantt)
+                        # create_gannt_chart verwacht kolommen bus/activity/start_time/end_time/... etc.
+                        fm.create_gannt_chart(df_gantt.rename(columns={
+                            "bus": "bus",
+                            "activity": "activity",
+                            "start_time": "start_time",
+                            "end_time": "end_time",
+                            "start_location": "start_location",
+                            "end_location": "end_location",
+                            "line": "line",
+                            "energy_consumption": "energy_consumption",
+                        }))
                         
-                        # --- Download button ---
+                        # -----------------------------
+                        # 9. DOWNLOAD KNOP
+                        # -----------------------------
                         st.subheader("Download Planning")
                         output = io.BytesIO()
                         with pd.ExcelWriter(output, engine='openpyxl') as writer:
                             df_planning.to_excel(writer, sheet_name='Schedule', index=False)
+                            df_gantt.to_excel(writer, sheet_name='DetailedTimeline', index=False)
                         output.seek(0)
                         
                         st.download_button(
@@ -397,7 +389,6 @@ elif page == "Planning Maker":
         except Exception as e:
             st.error(f"Something went wrong with the processing of files: {e}")
             st.exception(e)
-        
     else:
         st.info("Upload a timetable and distance matrix to start generating a bus planning!")
 
