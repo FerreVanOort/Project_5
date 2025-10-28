@@ -1,15 +1,21 @@
-# Formulas.py
+# Formulas
 
+# Imports
 import pandas as pd
 import numpy as np
 import streamlit as st
-import datetime
-from datetime import time
-from datetime import datetime, timedelta
+from datetime import time, datetime, timedelta
 import plotly.express as px
 
 
+# -------------------------------------------------
+# Cleaning & preprocessing
+# -------------------------------------------------
+
 def cleanup_excel(planning: pd.DataFrame) -> pd.DataFrame:
+    """
+    Replace spaces in column names, lowercase them.
+    """
     planning = planning.copy()
     planning.columns = planning.columns.str.replace(" ", "_")
     planning.columns = planning.columns.str.lower()
@@ -17,6 +23,9 @@ def cleanup_excel(planning: pd.DataFrame) -> pd.DataFrame:
 
 
 def cleanup_timetable(timetable: pd.DataFrame) -> pd.DataFrame:
+    """
+    Clean timetable column names: strip spaces, replace non-breaking spaces, lowercase.
+    """
     timetable = timetable.copy()
     timetable.columns = [
         str(c).strip().replace("\u00A0", "").replace(" ", "_").lower()
@@ -27,87 +36,114 @@ def cleanup_timetable(timetable: pd.DataFrame) -> pd.DataFrame:
 
 def check_format_excel(planning: pd.DataFrame):
     """
-    Checker verwacht exact deze kolommen:
-    ['start_location','end_location','start_time','end_time',
-     'activity','line','energy_consumption','bus']
+    Check if the uploaded bus planning has the required columns.
     """
-    cols = list(planning.columns)
-    expected = [
-        'start_location',
-        'end_location',
-        'start_time',
-        'end_time',
-        'activity',
-        'line',
-        'energy_consumption',
-        'bus'
+    items = list(planning.columns)
+    required = [
+        'start_location', 'end_location',
+        'start_time', 'end_time',
+        'activity', 'line',
+        'energy_consumption', 'bus'
     ]
-    if cols == expected:
+
+    if items == required:
         st.success("The uploaded file has the right format")
     else:
         st.error("The uploaded file does not have the right format")
-        st.write("Expected:", expected)
-        st.write("Got:", cols)
+        st.write("Expected:", required)
+        st.write("Got:", items)
 
+
+# -------------------------------------------------
+# Validation / checks
+# -------------------------------------------------
 
 def charging_check(planning: pd.DataFrame):
+    """
+    Checks if charging activities have correct (negative) energy values.
+
+    Input:
+        Bus planning as a Pandas DataFrame
+
+    Output:
+        - Success message if all charging values are correct
+        - Error message and visible table if one or more charging rows have positive energy
+    """
+    # Filter op fouten: 'charging' met positieve verbruikscijfers
     errors = planning[
         (planning['activity'].str.lower() == 'charging') &
         (planning['energy_consumption'] >= 0)
     ]
+
     if errors.empty:
-        st.success("Charging rates are correct (negative energy = charging).")
+        st.success("✅ All charging rates have correct (negative) energy values.")
     else:
-        st.error("Charging rows have positive energy_consumption (should be negative).")
-        st.subheader("Error lines:")
-        st.dataframe(errors, use_container_width=True)
+        st.error(f"⚠️ Charging rates have positive values in {len(errors)} line(s).")
+        with st.expander("Show affected lines"):
+            st.write("The following rows have incorrect (positive) charging values:")
+            st.dataframe(
+                errors[['bus', 'start_time', 'end_time', 'activity', 'energy_consumption']],
+                use_container_width=True
+            )
+
 
 
 def length_activities(planning: pd.DataFrame,
-                      start_col="start_time",
-                      end_col="end_time") -> pd.DataFrame:
+                      start_col: str = "start_time",
+                      end_col: str = "end_time") -> pd.DataFrame:
     """
-    Voeg diff + duration_min toe.
-    Houd rekening met activiteiten die over middernacht gaan.
+    Add 'diff' and 'duration_min' columns for each activity.
+    Handles overnight trips (end < start).
     """
     planning = planning.copy()
 
-    # Zet tijden om naar datetime met dummy datum
     start_dt = pd.to_datetime(planning[start_col], format="%H:%M:%S")
-    end_dt   = pd.to_datetime(planning[end_col],   format="%H:%M:%S")
+    end_dt = pd.to_datetime(planning[end_col], format="%H:%M:%S")
 
-    # Over-middernacht fix
+    # If end is "earlier" than start, assume it ends next day
     end_dt = end_dt.where(end_dt >= start_dt, end_dt + pd.Timedelta(days=1))
 
     planning["diff"] = end_dt - start_dt
     planning["duration_min"] = planning["diff"].dt.total_seconds() / 60
 
+    # Store back only the times
     planning[start_col] = start_dt.dt.time
-    planning[end_col]   = end_dt.dt.time
+    planning[end_col] = end_dt.dt.time
 
     return planning
 
 
 def charge_time(planning: pd.DataFrame):
     """
-    Check of elke charging activity minstens 15 minuten duurt.
+    Check if each charging period is at least 15 minutes.
     """
-    charging_moments = planning[planning['activity'].str.lower().str.contains("charging")]
+    planning = planning.copy()
 
-    too_short = charging_moments[charging_moments['diff'] < pd.Timedelta(minutes=15)]
+    # activity-kolom eerst naar string om .str.contains veilig te doen
+    planning["activity"] = planning["activity"].astype(str)
 
-    if len(too_short) > 0:
-        st.error(f"There are {len(too_short)} charging blocks shorter than 15 minutes.")
-        with st.expander("More info on charging times"):
-            short_charge = too_short[["start_time", "end_time", "activity"]]
-            st.write(pd.DataFrame(short_charge))
+    charging_moments = planning[planning["activity"].str.contains("charging", case=False, na=False)]
+
+    short_charge = charging_moments[charging_moments['diff'] < pd.Timedelta(minutes=15)]
+
+    if len(short_charge) > 0:
+        st.error(f"There are {len(short_charge)} times a bus is charged too short")
+        with st.expander("More information on charging times"):
+            st.write("Insufficient charge time")
+            short_show = short_charge[["start_time", "end_time", "activity"]]
+            st.write(short_show.reset_index(drop=True))
     else:
-        st.success("All charging moments are >= 15 minutes.")
+        st.success("All buses have sufficient charging times")
 
 
 def convert_to_time(value):
+    """
+    Guarantee that a time value is a datetime.time object.
+    Accepts '08:30', '08:30:00', or already a datetime.time.
+    """
     if isinstance(value, time):
         return value
+
     if pd.isnull(value):
         raise ValueError("Null time value found")
 
@@ -120,35 +156,43 @@ def convert_to_time(value):
     raise ValueError(f"Time format not recognized: {value}")
 
 
+def ensure_time_column(df: pd.DataFrame, column: str):
+    """
+    Convert a whole column to datetime.time using convert_to_time.
+    """
+    df[column] = df[column].apply(convert_to_time)
+
+
 def fill_idle_periods(planning: pd.DataFrame, base_day: datetime = None) -> pd.DataFrame:
     """
-    Vul expliciete idle-gaten in als 'idle', tussen activiteiten van dezelfde bus.
-    N.B. Maker exporteert al idle blokken, maar als user handmatig plant zonder idle,
-         vullen we ze hier alsnog.
+    Insert 'idle' rows for gaps between activities for each bus.
+    Also handles after-midnight logic.
     """
     planning = planning.copy()
-    
+
     if base_day is None:
         base_day = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
-    
-    # zet kolommen naar datetime.time
+
+    # Make sure start_time / end_time are datetime.time
     planning["start_time"] = pd.to_datetime(planning["start_time"], format="%H:%M:%S").dt.time
-    planning["end_time"]   = pd.to_datetime(planning["end_time"],   format="%H:%M:%S").dt.time
+    planning["end_time"] = pd.to_datetime(planning["end_time"], format="%H:%M:%S").dt.time
 
+    # Attach dummy date
     planning["start_dt"] = planning["start_time"].apply(lambda t: datetime.combine(base_day.date(), t))
-    planning["end_dt"]   = planning["end_time"].apply(lambda t: datetime.combine(base_day.date(), t))
+    planning["end_dt"] = planning["end_time"].apply(lambda t: datetime.combine(base_day.date(), t))
 
-    # fix over-middernacht
+    # Overnight shift: end before start means next day
     planning.loc[planning["end_dt"] < planning["start_dt"], "end_dt"] += timedelta(days=1)
 
-    # ritten tussen 00:00 en 03:00 horen eigenlijk 'volgende dag' te zijn
+    # Move trips starting between 00:00 and 03:00 to 'next day'
     mask_after_midnight = planning["start_dt"].dt.hour < 3
     planning.loc[mask_after_midnight, "start_dt"] += timedelta(days=1)
-    planning.loc[mask_after_midnight, "end_dt"]   += timedelta(days=1)
-    
+    planning.loc[mask_after_midnight, "end_dt"] += timedelta(days=1)
+
     idle_rows = []
 
-    for bus, bus_df in planning.groupby("bus"):
+    # Per bus, fill gaps with idle
+    for bus_name, bus_df in planning.groupby("bus"):
         bus_df = bus_df.sort_values("start_dt").reset_index(drop=True)
 
         for i in range(len(bus_df) - 1):
@@ -156,57 +200,58 @@ def fill_idle_periods(planning: pd.DataFrame, base_day: datetime = None) -> pd.D
             next_start = bus_df.loc[i + 1, "start_dt"]
 
             if next_start > current_end:
-                # voeg idle block toe
-                idle_row = {
-                    "start_location": bus_df.loc[i, "end_location"],
-                    "end_location":   bus_df.loc[i, "end_location"],
-                    "start_time":     current_end.time(),
-                    "end_time":       next_start.time(),
-                    "activity":       "idle",
-                    "line":           "",
-                    "energy_consumption": 0.0,  # idle verbruik vullen we niet hier exact
-                    "bus":            bus,
-                    "start_dt":       current_end,
-                    "end_dt":         next_start,
-                }
+                idle_row = bus_df.loc[i].copy()
+                idle_row["activity"] = "idle"
+                idle_row["start_dt"] = current_end
+                idle_row["end_dt"] = next_start
+                idle_row["start_time"] = current_end.time()
+                idle_row["end_time"] = next_start.time()
+
+                # idle hoort niet bij een lijn, dus lege string
+                idle_row["line"] = ""
+                idle_row["start_location"] = bus_df.loc[i, "end_location"]
+                idle_row["end_location"] = bus_df.loc[i, "end_location"]
+
                 idle_rows.append(idle_row)
-                
+
     if idle_rows:
         planning = pd.concat([planning, pd.DataFrame(idle_rows)], ignore_index=True)
         planning = planning.sort_values(["bus", "start_dt"]).reset_index(drop=True)
 
-    # ruim hulpkolommen op
-    planning = planning.drop(columns=["start_dt", "end_dt"], errors="ignore")
-    
+    # we hebben start_dt / end_dt hier niet meer nodig buiten de functie
+    planning = planning.drop(columns=["start_dt", "end_dt"])
+
     return planning
 
 
+# -------------------------------------------------
+# Gantt chart
+# -------------------------------------------------
+
 def create_gannt_chart(planning: pd.DataFrame, base_day: datetime = None):
     """
-    Maakt Gantt chart met kleuren per activity:
-    - 'service trip line XXX' (unieke kleur per lijn)
-    - 'material trip'
-    - 'charging'
-    - 'idle'
+    Build a Gantt chart in Streamlit.
+    - Service trips get colored by line -> legend: "service trip line 400"
+    - Charging / idle / material trip get fixed colors
     """
 
     planning = planning.copy()
 
-    # basisdatum
+    # Reference day
     if base_day is None:
         base_day = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
     planning["planning_day"] = base_day
 
-    # verschuif start_tijden tussen 00:00–03:00 naar 'volgende dag'
-    cutoff_start = datetime.strptime("00:00:00", "%H:%M:%S").time()
-    cutoff_end   = datetime.strptime("03:00:00", "%H:%M:%S").time()
+    # Anything starting between 00:00–03:00 belongs to 'next calendar day'
+    start_cutoff = datetime.strptime("00:00:00", "%H:%M:%S").time()
+    end_cutoff = datetime.strptime("03:00:00", "%H:%M:%S").time()
     mask_next_day = (
-        (planning["start_time"] >= cutoff_start) &
-        (planning["start_time"] <= cutoff_end)
+        (planning["start_time"] >= start_cutoff) &
+        (planning["start_time"] <= end_cutoff)
     )
     planning.loc[mask_next_day, "planning_day"] += pd.Timedelta(days=1)
 
-    # combineer times met datum
+    # Combine date + time
     planning["start_dt"] = planning.apply(
         lambda r: datetime.combine(r["planning_day"].date(), r["start_time"]),
         axis=1
@@ -216,33 +261,35 @@ def create_gannt_chart(planning: pd.DataFrame, base_day: datetime = None):
         axis=1
     )
 
-    # fix over-midnight
+    # Handle overnight (end before start)
     planning["end_dt"] = planning["end_dt"].where(
         planning["end_dt"] >= planning["start_dt"],
         planning["end_dt"] + timedelta(days=1)
     )
 
-    # duur
+    # Duration in minutes
     planning["duration_min"] = (
         planning["end_dt"] - planning["start_dt"]
     ).dt.total_seconds() / 60.0
 
+    # Build legend label / color group
     def _pick_display_group(row):
         if row["activity"] == "service trip":
-            # label per lijn
-            line_val = str(row.get("line", "")).strip()
-            if line_val == "" or line_val.lower() == "nan":
+            if "line" in row and pd.notna(row["line"]) and str(row["line"]).strip() != "":
+                try:
+                    # 401.0 -> "401"
+                    line_str = str(int(float(row["line"])))
+                except Exception:
+                    line_str = str(row["line"])
+                return f"service trip line {line_str}"
+            else:
                 return "service trip (unknown line)"
-            try:
-                line_str = str(int(float(line_val)))
-            except Exception:
-                line_str = line_val
-            return f"service trip line {line_str}"
         else:
             return row["activity"]
 
     planning["display_group"] = planning.apply(_pick_display_group, axis=1)
 
+    # Fixed colors for non-line activities
     base_colors = {
         "charging": "green",
         "idle": "gray",
@@ -250,16 +297,22 @@ def create_gannt_chart(planning: pd.DataFrame, base_day: datetime = None):
         "service trip (unknown line)": "blue",
     }
 
-    palette_cycle = ["blue", "purple", "red", "brown", "pink", "cyan", "olive", "magenta"]
+    # Palette to assign unique colors per line
+    palette_cycle = [
+        "blue", "purple", "red", "brown",
+        "pink", "cyan", "olive", "magenta"
+    ]
     color_map = dict(base_colors)
 
+    # Add dynamic colors for "service trip line X"
     line_groups = [
         g for g in planning["display_group"].unique()
         if isinstance(g, str) and g.startswith("service trip line ")
     ]
     for idx, g in enumerate(line_groups):
         color_map[g] = palette_cycle[idx % len(palette_cycle)]
-    
+
+    # Build timeline chart
     fig = px.timeline(
         planning,
         x_start="start_dt",
@@ -279,13 +332,17 @@ def create_gannt_chart(planning: pd.DataFrame, base_day: datetime = None):
         ],
     )
 
+    # Flip Y-axis so first bus is on top
     fig.update_yaxes(autorange="reversed")
+
+    # X-axis HH:MM formatting
     fig.update_xaxes(tickformat="%H:%M")
+
     fig.update_layout(
         title="Bus Planning Gantt Chart",
         xaxis_title="Time of Day",
         yaxis_title="Bus",
-        legend_title="Service trips / other activities",
+        legend_title="Activity / Line",
         height=600,
         width=2000,
     )
@@ -293,16 +350,19 @@ def create_gannt_chart(planning: pd.DataFrame, base_day: datetime = None):
     return st.plotly_chart(fig)
 
 
-def ensure_time_column(df: pd.DataFrame, column):
-    df[column] = df[column].apply(convert_to_time)
+# -------------------------------------------------
+# Coverage / timing checks
+# -------------------------------------------------
 
+def check_timetable(timetable: pd.DataFrame, planning: pd.DataFrame):
+    """
+    Check if every timetable ride is covered in the planning.
+    A ride is covered if there is a matching line, start, end, and departure time.
+    """
+    timetable = timetable.copy()
+    planning = planning.copy()
 
-def check_timetable(timetable, planning):
-    """
-    Controleert of alle ritten in timetable ook in planning zitten.
-    timetable kolommen: line, start, end, departure_time
-    planning kolommen: line, start_location, end_location, start_time
-    """
+    # Make sure time columns are really time objects
     ensure_time_column(timetable, 'departure_time')
     ensure_time_column(planning, 'start_time')
     ensure_time_column(planning, 'end_time')
@@ -311,11 +371,12 @@ def check_timetable(timetable, planning):
 
     for _, ride in timetable.iterrows():
         matching = planning[
-            (planning['line'].astype(str) == str(ride['line'])) &
-            (planning['start_location'].astype(str) == str(ride['start'])) &
-            (planning['end_location'].astype(str) == str(ride['end']))
+            (planning['line'] == ride['line']) &
+            (planning['start_location'] == ride['start']) &
+            (planning['end_location'] == ride['end'])
         ]
 
+        # Covered if any start_time matches the timetable departure_time
         is_covered = any(matching['start_time'] == ride['departure_time'])
 
         if not is_covered:
@@ -335,11 +396,14 @@ def check_timetable(timetable, planning):
         st.success("All rides are covered!")
 
 
-def check_ride_duration(planning, distancematrix):
+def check_ride_duration(planning: pd.DataFrame, distancematrix: pd.DataFrame):
     """
-    Controleer of de geplande service trips binnen de max_travel_time vallen
-    volgens de distance matrix.
+    Check if the duration of each (non-idle) ride is within allowed min/max
+    from the distance matrix.
     """
+    planning = planning.copy()
+    distancematrix = distancematrix.copy()
+
     required_cols = ["start", "end", "min_travel_time", "max_travel_time", "line"]
     missing = [c for c in required_cols if c not in distancematrix.columns]
     if missing:
@@ -347,28 +411,28 @@ def check_ride_duration(planning, distancematrix):
         st.write("Looking for:", required_cols)
         st.write("Actually have:", list(distancematrix.columns))
         return
-    
-    distancematrix = distancematrix.copy()
+
+    # Force numeric travel times
     distancematrix["min_travel_time"] = pd.to_numeric(distancematrix["min_travel_time"], errors='coerce')
     distancematrix["max_travel_time"] = pd.to_numeric(distancematrix["max_travel_time"], errors='coerce')
 
+    # Make sure we have duration_min
     if "duration_min" not in planning.columns:
         planning["duration_min"] = planning["diff"].dt.total_seconds() / 60
-    
+
     wrong_rides = []
 
     for _, ride in planning.iterrows():
-        if str(ride.get("activity", "")).lower() == "idle":
-            continue
-        if str(ride.get("activity", "")).lower() == "charging":
+        if ride.get("activity") == "idle":
             continue
 
         start_loc = ride["start_location"]
-        end_loc   = ride["end_location"]
-        busline   = ride["line"]
+        end_loc = ride["end_location"]
+        busline = ride["line"]
         actual_duration = ride["duration_min"]
         bus = ride["bus"]
 
+        # Find allowed time window for this leg+line
         match = distancematrix[
             (distancematrix["start"].astype(str) == str(start_loc)) &
             (distancematrix["end"].astype(str) == str(end_loc)) &
@@ -376,7 +440,7 @@ def check_ride_duration(planning, distancematrix):
         ]
 
         if match.empty:
-            # geen entry → slaan we over
+            # No info -> skip
             continue
 
         max_time = match["max_travel_time"].values[0]
@@ -408,33 +472,73 @@ def check_ride_duration(planning, distancematrix):
         st.success("All rides are within the allowed timeframe!")
 
 
+# -------------------------------------------------
+# SOC check
+# -------------------------------------------------
+
+def SOC_periods(planning: pd.DataFrame) -> pd.DataFrame:
+    """
+    Collapse consecutive below-min periods per bus into intervals.
+    """
+    dataf = planning.copy()
+    dataf = dataf.sort_values(['bus', 'start_time']).reset_index(drop=True)
+
+    shifted_end = dataf['end_time'].shift(1)
+    new_period = (
+        (dataf['start_time'] != shifted_end) |
+        (dataf['bus'] != dataf['bus'].shift(1))
+    )
+    dataf['period_id'] = new_period.cumsum()
+
+    result = dataf.groupby('period_id').agg({
+        'bus': 'first',
+        'start_time': 'first',
+        'end_time': 'last'
+    }).reset_index(drop=True)
+
+    return result
+
+
 def SOC_check(planning: pd.DataFrame, SOH, minbat, startbat):
     """
-    SOC-check:
-    - pakt planning in volgorde per bus (in tijd, met 00:xx na 23:xx)
-    - rekent kWh over de dag
-    - laat zien waar SOC onder min gaat
+    Checks SOC behavior for each bus.
+
+    We report:
+    1. The first violating activity per bus (summary view)
+    2. All violating activities (detailed view)
+
+    A 'violation' is now defined as:
+    - The bus STARTS below the minimum SOC, OR
+    - The bus STARTS above the minimum SOC, but during this activity
+      the SOC would at some point drop below the minimum.
+
+    We also apply night logic:
+    Activities starting between 00:00–03:00 are treated as "next day",
+    so they come after the daytime work in ordering.
     """
 
-    capacity_nominal = 300  # kWh fysiek
+    capacity = 300  # nominal battery capacity in kWh
+
     df = planning.copy()
 
-    # parse tijden terug naar datetime.time voor sorteren
+    # Ensure times are datetime.time
     df["start_time"] = pd.to_datetime(df["start_time"], format="%H:%M:%S").dt.time
     df["end_time"]   = pd.to_datetime(df["end_time"],   format="%H:%M:%S").dt.time
 
+    # helper for "shift after midnight"
     base_day = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
 
-    def shift_time_to_seq(t: time):
+    def to_shifted_dt(t: time):
         dt = datetime.combine(base_day.date(), t)
-        # alles voor 03:00 beschouwen als volgende dag
-        if t < time(3,0):
+        if t < time(3, 0):  # trips before 03:00 count as 'next day'
             dt += timedelta(days=1)
         return dt
 
-    df["start_dt_shifted"] = df["start_time"].apply(shift_time_to_seq)
+    # sort within each bus using shifted time
+    df["start_dt_shifted"] = df["start_time"].apply(to_shifted_dt)
     df = df.sort_values(["bus", "start_dt_shifted"]).reset_index(drop=True)
 
+    # prep columns
     df["SOC_start (kWh)"] = np.nan
     df["SOC_start (%)"] = np.nan
     df["SOC_after (kWh)"] = np.nan
@@ -446,60 +550,93 @@ def SOC_check(planning: pd.DataFrame, SOH, minbat, startbat):
     first_violation_rows = []
     all_violations_rows = []
 
-    for bus_id, group in df.groupby("bus"):
+    # loop per bus
+    for bus, group in df.groupby("bus"):
         idxs = group.index
 
-        max_battery_kwh = (SOH / 100.0) * capacity_nominal
-        start_soc_kwh   = (startbat / 100.0) * max_battery_kwh
-        min_soc_kwh     = (minbat / 100.0) * max_battery_kwh
-        min_soc_pct     = (min_soc_kwh / max_battery_kwh) * 100.0
+        # usable capacity = SOH% of nominal
+        max_battery_kwh = (SOH / 100.0) * capacity
 
-        usage = group["energy_consumption"].to_numpy()
+        # initial SOC in kWh at the very first activity of the (shifted) day
+        start_soc_kwh = (startbat / 100.0) * max_battery_kwh
 
+        # allowed minimum in kWh / %
+        min_soc_kwh = (minbat / 100.0) * max_battery_kwh
+        min_soc_pct = (min_soc_kwh / max_battery_kwh) * 100.0
+
+        usage = group["energy_consumption"].to_numpy()  # positive=consumption, negative=charging
+
+        # SOC at start of each activity
         soc_start_kwh = np.empty(len(usage))
         soc_start_kwh[0] = start_soc_kwh
         soc_start_kwh[1:] = start_soc_kwh - np.cumsum(usage[:-1])
+
+        # SOC at end of each activity
         soc_after_kwh = soc_start_kwh - usage
 
+        # Convert to %
         soc_start_pct = (soc_start_kwh / max_battery_kwh) * 100.0
         soc_after_pct = (soc_after_kwh / max_battery_kwh) * 100.0
 
-        df.loc[idxs, "SOC_start (kWh)"] = soc_start_kwh
-        df.loc[idxs, "SOC_start (%)"] = soc_start_pct
-        df.loc[idxs, "SOC_after (kWh)"] = soc_after_kwh
-        df.loc[idxs, "SOC_after (%)"] = soc_after_pct
-        df.loc[idxs, "min_battery (kWh)"] = min_soc_kwh
-        df.loc[idxs, "min_battery (%)"] = min_soc_pct
-
-        group_eval = df.loc[idxs].copy()
-        group_eval["violation"] = (
-            (group_eval["SOC_start (%)"] < group_eval["min_battery (%)"]) |
-            (
-                (group_eval["SOC_start (%)"] >= group_eval["min_battery (%)"]) &
-                (group_eval["SOC_after (%)"] < group_eval["min_battery (%)"])
-            )
+        # Now estimate "minimum SOC during this activity"
+        # If usage > 0 (we consume energy), SOC goes down over the activity → min is after.
+        # If usage < 0 (charging), SOC goes up → min is before.
+        usage_arr = usage
+        min_during_kwh = np.where(
+            usage_arr >= 0,
+            soc_after_kwh,
+            soc_start_kwh
         )
+        min_during_pct = (min_during_kwh / max_battery_kwh) * 100.0
 
-        df.loc[idxs, "violation"] = group_eval["violation"].to_numpy()
-        bad_rows_all = group_eval[group_eval["violation"]]
+        # Write columns back for debug
+        df.loc[idxs, "SOC_start (kWh)"]   = soc_start_kwh
+        df.loc[idxs, "SOC_start (%)"]     = soc_start_pct
+        df.loc[idxs, "SOC_after (kWh)"]   = soc_after_kwh
+        df.loc[idxs, "SOC_after (%)"]     = soc_after_pct
+        df.loc[idxs, "min_battery (kWh)"] = min_soc_kwh
+        df.loc[idxs, "min_battery (%)"]   = min_soc_pct
+        df.loc[idxs, "SOC_min_during (%)"] = min_during_pct
+        df.loc[idxs, "SOC_min_during (kWh)"] = min_during_kwh
+
+        # Define violation logic:
+        # 1. If it already starts illegal (< limit), that's a violation
+        starts_illegal = soc_start_pct < min_soc_pct
+
+        # 2. If it starts legal but dips under limit at any point in the activity
+        dips_during = (soc_start_pct >= min_soc_pct) & (min_during_pct < min_soc_pct)
+
+        violation_mask = starts_illegal | dips_during
+
+        df.loc[idxs, "violation"] = violation_mask
+
+        # collect all violations for this bus
+        bad_rows_all = df.loc[idxs][violation_mask]
 
         for _, row in bad_rows_all.iterrows():
-            st_t = row["start_time"]
+            start_t = row["start_time"]
             all_violations_rows.append({
                 "bus": row["bus"],
-                "time_when_SOC_too_low": st_t,
+                "time_when_SOC_too_low": start_t,
                 "activity": row.get("activity", None),
                 "start_location": row.get("start_location", None),
                 "end_location": row.get("end_location", None),
-                "SOC_at_start (kWh)": round(row["SOC_start (kWh)"], 2),
+
+                # SOC at start and the worst SOC reached in this activity
                 "SOC_at_start (%)": round(row["SOC_start (%)"], 1),
-                "SOC_after (kWh)": round(row["SOC_after (kWh)"], 2),
-                "SOC_after (%)": round(row["SOC_after (%)"], 1),
-                "minimum_allowed (kWh)": round(row["min_battery (kWh)"], 2),
+                "SOC_min_during (%)": round(row["SOC_min_during (%)"], 1),
+                "SOC_at_start (kWh)": round(row["SOC_start (kWh)"], 2),
+                "SOC_min_during (kWh)": round(row["SOC_min_during (kWh)"], 2),
+
+                # limit
                 "minimum_allowed (%)": round(row["min_battery (%)"], 1),
-                "_sort_key_dt": shift_time_to_seq(st_t),
+                "minimum_allowed (kWh)": round(row["min_battery (kWh)"], 2),
+
+                # for proper ordering (00:00-03:00 goes last)
+                "_sort_key_dt": to_shifted_dt(start_t),
             })
 
+        # first violation for this bus = earliest violation row after sorting by start_dt_shifted
         if not bad_rows_all.empty:
             first_row = bad_rows_all.iloc[0]
             first_violation_rows.append({
@@ -508,26 +645,33 @@ def SOC_check(planning: pd.DataFrame, SOH, minbat, startbat):
                 "activity": first_row.get("activity", None),
                 "start_location": first_row.get("start_location", None),
                 "end_location": first_row.get("end_location", None),
-                "SOC_at_start (kWh)": round(first_row["SOC_start (kWh)"], 2),
+
                 "SOC_at_start (%)": round(first_row["SOC_start (%)"], 1),
-                "SOC_after (kWh)": round(first_row["SOC_after (kWh)"], 2),
-                "SOC_after (%)": round(first_row["SOC_after (%)"], 1),
-                "minimum_allowed (kWh)": round(first_row["min_battery (kWh)"], 2),
+                "SOC_min_during (%)": round(first_row["SOC_min_during (%)"], 1),
+                "SOC_at_start (kWh)": round(first_row["SOC_start (kWh)"], 2),
+                "SOC_min_during (kWh)": round(first_row["SOC_min_during (kWh)"], 2),
+
                 "minimum_allowed (%)": round(first_row["min_battery (%)"], 1),
+                "minimum_allowed (kWh)": round(first_row["min_battery (kWh)"], 2),
             })
 
+    # -------- Streamlit output --------
     total_violations = len(all_violations_rows)
 
     if total_violations == 0:
         st.success("✅ No violating moments detected — all buses stay above the minimum SOC limit.")
+    elif total_violations == 1:
+        st.error("⚠️ 1 violating moment detected across all buses.")
     else:
-        st.error(f"⚠️ There are {total_violations} violating moments detected across all buses.")
+        st.error(f"⚠️ {total_violations} violating moments detected across all buses.")
 
+    # 1) Summary: first violation per bus
     if first_violation_rows:
         st.subheader("First violating activity per bus")
         summary_df = pd.DataFrame(first_violation_rows)
         st.dataframe(summary_df, use_container_width=True)
 
+    # 2) Full list: all violation moments
     if all_violations_rows:
         with st.expander("All violating moments (bus can fail multiple times)"):
             all_df = pd.DataFrame(all_violations_rows)
@@ -535,22 +679,37 @@ def SOC_check(planning: pd.DataFrame, SOH, minbat, startbat):
             all_df_display = all_df.drop(columns=["_sort_key_dt"])
             st.dataframe(all_df_display, use_container_width=True)
 
+    # 3) Debug timeline
     with st.expander("Full SOC timeline per bus (debug)"):
         debug_cols = [
-            "bus", "start_time", "end_time", "activity",
-            "SOC_start (kWh)", "SOC_start (%)",
-            "SOC_after (kWh)", "SOC_after (%)",
-            "min_battery (kWh)", "min_battery (%)",
-            "violation", "start_location", "end_location",
+            "bus",
+            "start_time",
+            "end_time",
+            "activity",
+            "SOC_start (kWh)",
+            "SOC_start (%)",
+            "SOC_after (kWh)",
+            "SOC_after (%)",
+            "SOC_min_during (kWh)",
+            "SOC_min_during (%)",
+            "min_battery (kWh)",
+            "min_battery (%)",
+            "violation",
+            "start_location",
+            "end_location",
             "energy_consumption"
         ]
         debug_view = df[debug_cols].copy()
-        for col in ["SOC_start (kWh)", "SOC_after (kWh)", "min_battery (kWh)"]:
+        for col in ["SOC_start (kWh)", "SOC_after (kWh)", "SOC_min_during (kWh)", "min_battery (kWh)"]:
             debug_view[col] = debug_view[col].round(2)
-        for col in ["SOC_start (%)", "SOC_after (%)", "min_battery (%)"]:
+        for col in ["SOC_start (%)", "SOC_after (%)", "SOC_min_during (%)", "min_battery (%)"]:
             debug_view[col] = debug_view[col].round(1)
         st.dataframe(debug_view, use_container_width=True)
 
+
+# -------------------------------------------------
+# Energy calculation
+# -------------------------------------------------
 
 def calculate_energy_consumption(planning: pd.DataFrame,
                                  distancematrix: pd.DataFrame,
@@ -558,54 +717,77 @@ def calculate_energy_consumption(planning: pd.DataFrame,
                                  idle_usage,
                                  charging_speed):
     """
-    Herbereken verbruik per activity als je een bestaande handmatige planning uploadt.
-    (In Maker doen we dit al zelf, maar dit is voor Checker van user-input.)
+    Recalculate energy consumption using:
+    - driving_usage [kW/km]
+    - idle_usage [kW constant]
+    - charging_speed [kW/h] (negative, so charging adds energy)
     """
+
     planning = planning.copy()
     distance = distancematrix.copy()
-    
+
+    # Match column names for merge
+    distance = distance.copy()
     distance.rename(columns={"start": "start_location", "end": "end_location"}, inplace=True)
-    
+
+    # ensure consistent types
     for col in ["start_location", "end_location", "line"]:
         if col in planning.columns:
             planning[col] = planning[col].astype(str)
         if col in distance.columns:
             distance[col] = distance[col].astype(str)
-    
+
     df = planning.merge(
         distance[["start_location", "end_location", "line", "distance_m"]],
         on=["start_location", "end_location", "line"],
         how="left"
     )
-    
+
     if "diff_min" not in df.columns:
         df["diff_min"] = df["diff"].dt.total_seconds() / 60
-    
+
     df["energy_consumption_new"] = np.select(
         condlist=[
             df["activity"].str.contains("idle", case=False, na=False),
             df["activity"].str.contains("charging", case=False, na=False)
         ],
         choicelist=[
-            (df["diff_min"] / 60.0) * idle_usage,        # idle verbruik
-            (df["diff_min"] * charging_speed * -1) / 60  # charging (negatief)
+            idle_usage,
+            (df["diff_min"] * charging_speed * -1) / 60
         ],
-        default=(df["distance_m"] / 1000.0) * driving_usage
+        default=(df["distance_m"] / 1000) * driving_usage
     )
-    
+
+    # heel belangrijk: gebruik de nieuwe berekening ook voor SOC_check
+    df["energy_consumption"] = df["energy_consumption_new"]
+
     return df
 
 
-def main(timetable, planning, distancematrix):
+# -------------------------------------------------
+# Demo main (for direct Streamlit use)
+# -------------------------------------------------
+
+# Default constants
+driving_usage = 1.2
+idle_usage = 5
+charging_speed = 450
+SOH = 90
+minbat = 10
+startbat = 100
+
+
+def main(timetable: pd.DataFrame, planning: pd.DataFrame, distancematrix: pd.DataFrame):
     """
-    Niet meer gebruikt direct in Tool.py, maar laat ik staan als losse debugger.
+    Run all checks in order and show output in Streamlit.
     """
+
     st.title("Bus Planning Control Center")
 
     st.header("Cleanup & Format Check")
     planning_clean = cleanup_excel(planning)
     check_format_excel(planning_clean)
-    
+
     st.header("Fill idle periods")
     planning_filled = fill_idle_periods(planning_clean)
 
@@ -621,18 +803,18 @@ def main(timetable, planning, distancematrix):
 
     st.header("Check Ride Duration vs Distance Matrix")
     check_ride_duration(planning_with_length, distancematrix)
-    
+
     st.header("Calculated energy consumption")
     planning_calculated = calculate_energy_consumption(
         planning_with_length,
         distancematrix,
-        driving_usage=1.2,
-        idle_usage=5,
-        charging_speed=450
+        driving_usage,
+        idle_usage,
+        charging_speed
     )
-    
+
     st.header("Check SOC")
-    SOC_check(planning_calculated, 90, 10, 100)
-    
+    SOC_check(planning_calculated, SOH, minbat, startbat)
+
     st.header("Gantt Chart of Bus Planning")
     create_gannt_chart(planning_calculated)
