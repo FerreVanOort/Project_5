@@ -237,6 +237,16 @@ elif page == "Advanced Options":
 # -------------------------------------------------
 elif page == "User Manual":
     st.title("User Manual", anchor='group 8')
+    
+    with open("usermanual.pdf", "rb") as file:
+        pdf_data = file.read()
+        
+    st.download_button(
+        label = "Download User Manual",
+        data = pdf_data,
+        file_name = "usermanual.pdf",
+        mime = "application/pdf"
+    )
 
 
 # -------------------------------------------------
