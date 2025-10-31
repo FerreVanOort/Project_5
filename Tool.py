@@ -18,9 +18,10 @@ st.set_page_config(page_title="Prototype groep 8", layout="wide")
 st.sidebar.header("Menu")
 page = st.sidebar.radio(
     "Go to page:",
-    ["Planning Checker", "Planning Maker", "Advanced Options", "User Manual", "About Us"],
+    ["Planning Checker", "Advanced Options", "User Manual", "About Us"],
     label_visibility="collapsed"
 )
+# , "Planning Maker" TERUG TOEVOEGEN VOOR PLANNING MAKER DEADLINE
 
 # Session defaults
 if "driving_usage" not in st.session_state:
