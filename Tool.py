@@ -3,7 +3,7 @@
 # Imports
 from fileinput import filename
 import Formulas as fm
-import PlanningMaker as pm
+import PlanningMakerferre as pm
 import io
 from datetime import datetime, timedelta
 import pandas as pd
@@ -18,7 +18,7 @@ st.set_page_config(page_title="Prototype groep 8", layout="wide")
 st.sidebar.header("Menu")
 page = st.sidebar.radio(
     "Go to page:",
-    ["Planning Checker", "Advanced Options", "User Manual", "About Us"],
+    ["Planning Checker", "Planning Maker", "Advanced Options", "User Manual", "About Us"],
     label_visibility="collapsed"
 )
 # , "Planning Maker" TERUG TOEVOEGEN VOOR PLANNING MAKER DEADLINE
