@@ -165,8 +165,152 @@ if page == "Planning Checker":
 # -------------------------------------------------
 elif page == "Planning Maker":
     st.title("Prototype Group 8 - Bus Planning Maker", anchor='group 8')
-    st.info("⚠️ Planning Maker niet relevant voor de huidige check — deze sectie kan ongewijzigd blijven.")
+    st.subheader("Create a complete bus planning from timetable and distance matrix")
+    
+    st.info("""
+    **Upload timetable and distance matrix to automatically generate a bus planning.**
+    
+    The Planning Maker will:
+    - Assign rides to buses efficiently
+    - Plan charging sessions when needed
+    - Track deadhead trips (empty rides to start location)
+    - Monitor idle periods
+    - Ensure battery levels stay above minimum
+    
+    All settings from Advanced Options will be applied automatically.
+    """)
 
+    uploaded_timetable_maker = st.file_uploader(
+        "Upload timetable (.xlsx)", 
+        type=["xlsx"], 
+        key="timetable_maker_upload",
+        help="Expected columns: start, departure_time, end, line"
+    )
+    uploaded_distances_maker = st.file_uploader(
+        "Upload distance matrix (.xlsx)", 
+        type=["xlsx"], 
+        key="distances_maker_upload",
+        help="Expected columns: start, end, min_travel_time, max_travel_time, distance_m, line"
+    )
+    
+    # Configuration options
+    col1, col2 = st.columns(2)
+    with col1:
+        charging_station = st.text_input(
+            "Charging Station Name",
+            value=st.session_state.charging_station,
+            help="Name of the charging station location (must match location in distance matrix)"
+        )
+        st.session_state.charging_station = charging_station
+    
+    with col2:
+        garage_location = st.text_input(
+            "Garage Location Name",
+            value=st.session_state.garage_location,
+            help="Name of the garage where buses start (must match location in distance matrix)"
+        )
+        st.session_state.garage_location = garage_location
+    
+    if uploaded_timetable_maker and uploaded_distances_maker:
+        try:
+            timetable_maker = pd.read_excel(uploaded_timetable_maker, engine="openpyxl")
+            distancematrix_maker = pd.read_excel(uploaded_distances_maker, engine="openpyxl")
+            
+            st.success("Files successfully loaded!")
+            
+            # Show preview of uploaded data
+            with st.expander("Preview Timetable"):
+                st.dataframe(timetable_maker.head(10))
+            
+            with st.expander("Preview Distance Matrix"):
+                st.dataframe(distancematrix_maker.head(10))
+            
+            # Create planning button
+            if st.button("🚀 Create Bus Planning", type="primary"):
+                with st.spinner("Creating bus planning... This may take a moment."):
+                    try:
+                        # Create planning using the Planning Maker
+                        planning_result = pm.create_bus_planning(
+                            timetable_df=timetable_maker,
+                            distance_matrix_df=distancematrix_maker,
+                            charging_station=st.session_state.charging_station,
+                            garage_location=st.session_state.garage_location,
+                            driving_usage=st.session_state.driving_usage,
+                            idle_usage=st.session_state.idle_usage,
+                            charging_speed=st.session_state.charging_speed,
+                            soh=st.session_state.soh,
+                            startbat=st.session_state.startbat
+                        )
+                        
+                        st.success("✅ Bus planning successfully created!")
+                        
+                        # Show statistics
+                        st.header("Planning Statistics")
+                        col1, col2, col3, col4 = st.columns(4)
+                        
+                        with col1:
+                            total_buses = planning_result['omloop_nummer'].nunique()
+                            st.metric("Total Buses", total_buses)
+                        
+                        with col2:
+                            total_rides = len(planning_result[planning_result['activiteit'] == 'ride'])
+                            st.metric("Total Rides", total_rides)
+                        
+                        with col3:
+                            total_charging = len(planning_result[planning_result['activiteit'] == 'charging'])
+                            st.metric("Charging Sessions", total_charging)
+                        
+                        with col4:
+                            total_idle = len(planning_result[planning_result['activiteit'] == 'idle'])
+                            st.metric("Idle Periods", total_idle)
+                        
+                        # Show event breakdown
+                        st.header("Event Breakdown")
+                        event_counts = planning_result['activiteit'].value_counts()
+                        col1, col2 = st.columns([1, 2])
+                        
+                        with col1:
+                            st.dataframe(event_counts.rename("Count"), use_container_width=True)
+                        
+                        with col2:
+                            st.bar_chart(event_counts)
+                        
+                        # Show detailed planning
+                        st.header("Detailed Planning")
+                        st.dataframe(planning_result, use_container_width=True)
+                        
+                        # Download button
+                        st.header("Download Planning")
+                        
+                        # Convert to Excel in memory
+                        output = io.BytesIO()
+                        with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                            planning_result.to_excel(writer, sheet_name='Bus_Planning', index=False)
+                        
+                        excel_data = output.getvalue()
+                        
+                        st.download_button(
+                            label="📥 Download Planning as Excel",
+                            data=excel_data,
+                            file_name=f"bus_planning_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
+                            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+                        )
+                        
+                        st.info("""
+                        **Next steps:**
+                        1. Download the generated planning
+                        2. Go to 'Planning Checker' to validate the planning
+                        3. Review the Gantt chart and all checks
+                        """)
+                        
+                    except Exception as e:
+                        st.error(f"Error creating planning: {str(e)}")
+                        st.exception(e)
+        
+        except Exception as e:
+            st.error(f"Error loading files: {str(e)}")
+    else:
+        st.info("Upload both timetable and distance matrix to start creating a planning.")
 
 # -------------------------------------------------
 # Page 3 - Advanced Options
