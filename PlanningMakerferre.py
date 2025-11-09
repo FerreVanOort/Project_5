@@ -404,10 +404,14 @@ class BusScheduler:
             current_location, ride.start_stop, self.consumption_per_km)
         ride_energy = calculate_energy_consumption(ride.distance_km, self.consumption_per_km)
         total_energy_needed = deadhead_energy + ride_energy
-        safe_energy_needed = total_energy_needed * 1.2
+        
+        # More aggressive charging strategy: charge if below 40% OR if not enough for this ride + buffer
+        battery_percent = current_battery / BusConstants.BATTERY_CAPACITY
+        safe_energy_needed = total_energy_needed * 1.3  # 30% safety buffer
+        needs_charging = (battery_percent < 0.40) or (current_battery < safe_energy_needed)
         
         # CHARGING if needed
-        if current_battery < safe_energy_needed:
+        if needs_charging:
             charger = self.charging_planner.charging_station
             
             if current_location != charger:
@@ -426,17 +430,22 @@ class BusScheduler:
             if battery_at_charger < min_battery_kwh:
                 battery_at_charger = min_battery_kwh + 10
             
+            # Calculate available charging time
             time_from_charger = self.distance_matrix.get_travel_time_minutes(
                 charger, ride.start_stop)
             time_available = (ride.start_time - arrival_at_charger).total_seconds() / 60
             available_for_charging = max(BusConstants.MIN_CHARGE_TIME, 
                                         time_available - time_from_charger - 5)
             
+            # Determine target charge level
+            # Target: charge to 80% or enough for next few rides, whichever is higher
             energy_after_charging_needed = (
                 self.distance_matrix.get_energy_for_deadhead(charger, ride.start_stop, self.consumption_per_km) +
                 ride_energy + 20
             )
-            target_charge = min(energy_after_charging_needed, BusConstants.BATTERY_CAPACITY)
+            min_target = energy_after_charging_needed
+            optimal_target = BusConstants.BATTERY_CAPACITY * 0.80  # Aim for 80%
+            target_charge = min(max(min_target, optimal_target), BusConstants.BATTERY_CAPACITY)
             
             charged_to, charge_duration = self.charging_planner.plan_charging_session(
                 Bus(bus.bus_id, charger, battery_at_charger, arrival_at_charger),
