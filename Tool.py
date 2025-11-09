@@ -168,7 +168,7 @@ if page == "Planning Checker":
 # Page 2 - Planning Maker
 # -------------------------------------------------
 elif page == "Planning Maker":
-    st.title("Prototype Group 8 - Bus Planning Maker", anchor='group 8')
+    st.title("Prototype Group 8 - Bus Planning Maker - WORK IN PROGRESS", anchor='group 8')
     st.subheader("Create a complete bus planning from timetable and distance matrix")
 
     uploaded_timetable_maker = st.file_uploader(
