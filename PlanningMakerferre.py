@@ -1,10 +1,8 @@
 """
-Complete Bus Planning System met correcte Idle Tracking
-=======================================================
-Verbeteringen:
-- Idle periods worden expliciet bijgehouden
-- Uitgebreide Excel export met alle events (rides, charging, deadhead, idle)
-- Gantt chart compatible output
+PlanningMakerferre.py
+====================
+Bus Planning Maker met volledige event tracking (rides, charging, deadhead, idle)
+Voor gebruik in Streamlit applicatie
 """
 
 import pandas as pd
@@ -44,6 +42,7 @@ class Ride:
     start_time: datetime
     end_time: datetime
     distance_meters: float
+    line: str = ""
     
     @property
     def distance_km(self) -> float:
@@ -81,6 +80,7 @@ class Event:
     distance_km: float = 0.0
     energy_consumed: float = 0.0
     ride_id: Optional[str] = None
+    line: str = ""
     
     @property
     def duration_minutes(self) -> float:
@@ -119,19 +119,29 @@ class Assignment:
 # Battery Calculation Functions
 # ============================================================================
 
-def calculate_energy_consumption(distance_km: float) -> float:
+def calculate_energy_consumption(distance_km: float, consumption_per_km: float = None) -> float:
     """Calculate energy consumption for a given distance."""
-    return distance_km * BusConstants.CONSUMPTION_PER_KM
+    if consumption_per_km is None:
+        consumption_per_km = BusConstants.CONSUMPTION_PER_KM
+    return distance_km * consumption_per_km
 
 
-def calculate_idle_consumption(minutes: float) -> float:
+def calculate_idle_consumption(minutes: float, idle_per_hour: float = None) -> float:
     """Calculate energy consumption while idle."""
+    if idle_per_hour is None:
+        idle_per_hour = BusConstants.IDLE_CONSUMPTION_PER_HOUR
     hours = minutes / 60
-    return hours * BusConstants.IDLE_CONSUMPTION_PER_HOUR
+    return hours * idle_per_hour
 
 
-def calculate_charging_time(current_kwh: float, target_kwh: float) -> float:
+def calculate_charging_time(current_kwh: float, target_kwh: float, 
+                           fast_rate: float = None, slow_rate: float = None) -> float:
     """Calculate time needed to charge from current to target level."""
+    if fast_rate is None:
+        fast_rate = BusConstants.FAST_CHARGE_RATE
+    if slow_rate is None:
+        slow_rate = BusConstants.SLOW_CHARGE_RATE
+        
     if target_kwh <= current_kwh:
         return 0
     
@@ -141,14 +151,14 @@ def calculate_charging_time(current_kwh: float, target_kwh: float) -> float:
     # Phase 1: Fast charging up to 90%
     if current_kwh < threshold_kwh:
         fast_charge_amount = min(target_kwh, threshold_kwh) - current_kwh
-        fast_charge_hours = fast_charge_amount / BusConstants.FAST_CHARGE_RATE
+        fast_charge_hours = fast_charge_amount / fast_rate
         total_minutes += fast_charge_hours * 60
     
     # Phase 2: Slow charging above 90%
     if target_kwh > threshold_kwh and current_kwh < target_kwh:
         slow_charge_start = max(current_kwh, threshold_kwh)
         slow_charge_amount = target_kwh - slow_charge_start
-        slow_charge_hours = slow_charge_amount / BusConstants.SLOW_CHARGE_RATE
+        slow_charge_hours = slow_charge_amount / slow_rate
         total_minutes += slow_charge_hours * 60
     
     return max(total_minutes, BusConstants.MIN_CHARGE_TIME)
@@ -159,7 +169,7 @@ def calculate_charging_time(current_kwh: float, target_kwh: float) -> float:
 # ============================================================================
 
 class DataLoader:
-    """Loads data from Excel files or DataFrames"""
+    """Loads data from DataFrames"""
     
     @staticmethod
     def load_timetable_from_df(df: pd.DataFrame, distance_matrix_df: pd.DataFrame = None) -> List[Ride]:
@@ -215,7 +225,8 @@ class DataLoader:
                     end_stop=end_stop,
                     start_time=departure_time,
                     end_time=arrival_time,
-                    distance_meters=distance_m
+                    distance_meters=distance_m,
+                    line=line
                 )
                 rides.append(ride)
             except Exception as e:
@@ -233,7 +244,7 @@ class DataLoader:
             try:
                 start = str(row['start']).strip()
                 end = str(row['end']).strip()
-                line = str(row['line']).strip()
+                line = str(row['line']).strip() if 'line' in row else ""
                 
                 distance_m = float(row['distance_m'])
                 min_time = float(row['min_travel_time'])
@@ -281,9 +292,10 @@ class DistanceMatrix:
             return distance_km / 30 * 60
         return time
     
-    def get_energy_for_deadhead(self, from_stop: str, to_stop: str) -> float:
+    def get_energy_for_deadhead(self, from_stop: str, to_stop: str, 
+                               consumption_per_km: float = None) -> float:
         distance_km = self.get_distance_km(from_stop, to_stop)
-        return calculate_energy_consumption(distance_km)
+        return calculate_energy_consumption(distance_km, consumption_per_km)
 
 
 # ============================================================================
@@ -293,13 +305,16 @@ class DistanceMatrix:
 class ChargingPlanner:
     """Manages charging decisions and calculations"""
     
-    def __init__(self, charging_station_location: str):
+    def __init__(self, charging_station_location: str, fast_rate: float = None, slow_rate: float = None):
         self.charging_station = charging_station_location
+        self.fast_rate = fast_rate if fast_rate else BusConstants.FAST_CHARGE_RATE
+        self.slow_rate = slow_rate if slow_rate else BusConstants.SLOW_CHARGE_RATE
     
     def plan_charging_session(self, bus: Bus, target_kwh: float,
                              available_time: float) -> Tuple[float, float]:
         """Plan a charging session within available time."""
-        ideal_time = calculate_charging_time(bus.current_battery_kwh, target_kwh)
+        ideal_time = calculate_charging_time(bus.current_battery_kwh, target_kwh, 
+                                            self.fast_rate, self.slow_rate)
         
         if ideal_time <= available_time:
             return target_kwh, ideal_time
@@ -315,17 +330,17 @@ class ChargingPlanner:
         
         if current < threshold_kwh:
             fast_charge_capacity = threshold_kwh - current
-            fast_charge_possible = BusConstants.FAST_CHARGE_RATE * hours
+            fast_charge_possible = self.fast_rate * hours
             
             if fast_charge_possible <= fast_charge_capacity:
                 return current + fast_charge_possible
             else:
-                time_for_fast = fast_charge_capacity / BusConstants.FAST_CHARGE_RATE
+                time_for_fast = fast_charge_capacity / self.fast_rate
                 remaining_hours = hours - time_for_fast
                 current = threshold_kwh
                 hours = remaining_hours
         
-        slow_charge = BusConstants.SLOW_CHARGE_RATE * hours
+        slow_charge = self.slow_rate * hours
         return min(current + slow_charge, BusConstants.BATTERY_CAPACITY)
 
 
@@ -338,10 +353,14 @@ class BusScheduler:
     
     def __init__(self, distance_matrix: DistanceMatrix, 
                  charging_planner: ChargingPlanner,
-                 garage_location: str):
+                 garage_location: str,
+                 consumption_per_km: float = None,
+                 idle_per_hour: float = None):
         self.distance_matrix = distance_matrix
         self.charging_planner = charging_planner
         self.garage_location = garage_location
+        self.consumption_per_km = consumption_per_km if consumption_per_km else BusConstants.CONSUMPTION_PER_KM
+        self.idle_per_hour = idle_per_hour if idle_per_hour else BusConstants.IDLE_CONSUMPTION_PER_HOUR
     
     def can_bus_serve_ride(self, bus: Bus, ride: Ride) -> Tuple[bool, Optional[str]]:
         """Check if bus can serve a ride."""
@@ -353,8 +372,8 @@ class BusScheduler:
             return False, "Cannot arrive in time"
         
         deadhead_energy = self.distance_matrix.get_energy_for_deadhead(
-            bus.current_location, ride.start_stop)
-        ride_energy = calculate_energy_consumption(ride.distance_km)
+            bus.current_location, ride.start_stop, self.consumption_per_km)
+        ride_energy = calculate_energy_consumption(ride.distance_km, self.consumption_per_km)
         
         if bus.current_battery_kwh >= (deadhead_energy + ride_energy):
             return True, None
@@ -382,8 +401,8 @@ class BusScheduler:
         
         # Calculate energy needs
         deadhead_energy = self.distance_matrix.get_energy_for_deadhead(
-            current_location, ride.start_stop)
-        ride_energy = calculate_energy_consumption(ride.distance_km)
+            current_location, ride.start_stop, self.consumption_per_km)
+        ride_energy = calculate_energy_consumption(ride.distance_km, self.consumption_per_km)
         total_energy_needed = deadhead_energy + ride_energy
         safe_energy_needed = total_energy_needed * 1.2
         
@@ -393,7 +412,7 @@ class BusScheduler:
             
             if current_location != charger:
                 energy_to_charger = self.distance_matrix.get_energy_for_deadhead(
-                    current_location, charger)
+                    current_location, charger, self.consumption_per_km)
                 time_to_charger = self.distance_matrix.get_travel_time_minutes(
                     current_location, charger)
                 
@@ -414,7 +433,7 @@ class BusScheduler:
                                         time_available - time_from_charger - 5)
             
             energy_after_charging_needed = (
-                self.distance_matrix.get_energy_for_deadhead(charger, ride.start_stop) +
+                self.distance_matrix.get_energy_for_deadhead(charger, ride.start_stop, self.consumption_per_km) +
                 ride_energy + 20
             )
             target_charge = min(energy_after_charging_needed, BusConstants.BATTERY_CAPACITY)
@@ -437,7 +456,7 @@ class BusScheduler:
                 end_location=charger,
                 battery_before=battery_at_charger,
                 battery_after=charged_to,
-                energy_consumed=-(charged_to - battery_at_charger)  # Negative = gained energy
+                energy_consumed=-(charged_to - battery_at_charger)
             )
             assignment.events.append(charging_event)
             
@@ -451,7 +470,7 @@ class BusScheduler:
                 current_location, ride.start_stop)
             deadhead_time = self.distance_matrix.get_travel_time_minutes(
                 current_location, ride.start_stop)
-            deadhead_energy = calculate_energy_consumption(deadhead_distance)
+            deadhead_energy = calculate_energy_consumption(deadhead_distance, self.consumption_per_km)
             
             departure_for_deadhead = current_time
             arrival_at_start = departure_for_deadhead + timedelta(minutes=deadhead_time)
@@ -480,7 +499,7 @@ class BusScheduler:
         idle_seconds = (ride.start_time - current_time).total_seconds()
         if idle_seconds > 60:  # More than 1 minute
             idle_minutes = idle_seconds / 60
-            idle_energy = calculate_idle_consumption(idle_minutes)
+            idle_energy = calculate_idle_consumption(idle_minutes, self.idle_per_hour)
             battery_after_idle = current_battery - idle_energy
             
             # Add IDLE EVENT
@@ -501,7 +520,7 @@ class BusScheduler:
             current_time = ride.start_time
         
         # RIDE execution
-        ride_energy = calculate_energy_consumption(ride.distance_km)
+        ride_energy = calculate_energy_consumption(ride.distance_km, self.consumption_per_km)
         battery_after_ride = current_battery - ride_energy
         
         ride_event = Event(
@@ -515,7 +534,8 @@ class BusScheduler:
             battery_after=battery_after_ride,
             distance_km=ride.distance_km,
             energy_consumed=ride_energy,
-            ride_id=ride.ride_id
+            ride_id=ride.ride_id,
+            line=ride.line
         )
         assignment.events.append(ride_event)
         
@@ -574,122 +594,93 @@ class BusScheduler:
 
 
 # ============================================================================
-# Excel Export met Gantt-compatible format
+# Export Functions
 # ============================================================================
 
-class ExcelExporter:
-    """Export planning results to Excel with Gantt chart data"""
-    
-    @staticmethod
-    def export_planning(assignments: List[Assignment], output_file: str):
-        """Export complete planning including ALL events for Gantt chart."""
-        print(f"\nExporting planning to {output_file}...")
-        
-        # Create detailed event log for Gantt chart
-        all_events = []
-        for assignment in assignments:
-            for event in assignment.events:
-                all_events.append({
-                    'Bus_ID': event.bus_id,
-                    'Event_Type': event.event_type,
-                    'Start_Time': event.start_time,
-                    'End_Time': event.end_time,
-                    'Duration_Min': round(event.duration_minutes, 1),
-                    'Start_Location': event.start_location,
-                    'End_Location': event.end_location,
-                    'Distance_km': round(event.distance_km, 2),
-                    'Battery_Before_%': round(event.battery_percent_before, 1),
-                    'Battery_After_%': round(event.battery_percent_after, 1),
-                    'Battery_Before_kWh': round(event.battery_before, 1),
-                    'Battery_After_kWh': round(event.battery_after, 1),
-                    'Energy_Consumed_kWh': round(event.energy_consumed, 2),
-                    'Ride_ID': event.ride_id if event.ride_id else ''
-                })
-        
-        df_events = pd.DataFrame(all_events)
-        
-        # Create summary by bus
-        summary_data = []
-        for bus_id in df_events['Bus_ID'].unique():
-            bus_events = df_events[df_events['Bus_ID'] == bus_id]
-            
-            rides = bus_events[bus_events['Event_Type'] == 'ride']
-            charging = bus_events[bus_events['Event_Type'] == 'charging']
-            deadhead = bus_events[bus_events['Event_Type'] == 'deadhead']
-            idle = bus_events[bus_events['Event_Type'] == 'idle']
-            
-            summary_data.append({
-                'Bus_ID': bus_id,
-                'Total_Rides': len(rides),
-                'Total_Distance_km': rides['Distance_km'].sum(),
-                'Charging_Sessions': len(charging),
-                'Total_Charging_Time_Min': charging['Duration_Min'].sum(),
-                'Deadhead_Trips': len(deadhead),
-                'Total_Deadhead_km': deadhead['Distance_km'].sum(),
-                'Idle_Periods': len(idle),
-                'Total_Idle_Time_Min': idle['Duration_Min'].sum(),
-                'Total_Energy_Consumed_kWh': bus_events[bus_events['Energy_Consumed_kWh'] > 0]['Energy_Consumed_kWh'].sum()
+def assignments_to_dataframe(assignments: List[Assignment]) -> pd.DataFrame:
+    """Convert assignments to DataFrame for export or display."""
+    all_events = []
+    for assignment in assignments:
+        for event in assignment.events:
+            all_events.append({
+                'omloop_nummer': event.bus_id,
+                'activiteit': event.event_type,
+                'starttijd': event.start_time,
+                'eindtijd': event.end_time,
+                'startlocatie': event.start_location,
+                'eindlocatie': event.end_location,
+                'distance_km': round(event.distance_km, 2),
+                'energieverbruik': round(event.energy_consumed, 2),
+                'SOC_start': round(event.battery_percent_before, 1),
+                'SOC_eind': round(event.battery_percent_after, 1),
+                'lijn': event.line if event.line else ''
             })
-        
-        df_summary = pd.DataFrame(summary_data)
-        
-        # Write to Excel with multiple sheets
-        with pd.ExcelWriter(output_file, engine='openpyxl') as writer:
-            df_events.to_excel(writer, sheet_name='All_Events_Gantt', index=False)
-            df_summary.to_excel(writer, sheet_name='Bus_Summary', index=False)
-        
-        print(f"  Export complete!")
-        print(f"  - {len(assignments)} rides scheduled")
-        print(f"  - {len(df_summary)} buses used")
-        print(f"  - {len(all_events)} total events tracked")
-        print(f"    * {len([e for e in all_events if e['Event_Type'] == 'ride'])} rides")
-        print(f"    * {len([e for e in all_events if e['Event_Type'] == 'charging'])} charging sessions")
-        print(f"    * {len([e for e in all_events if e['Event_Type'] == 'deadhead'])} deadhead trips")
-        print(f"    * {len([e for e in all_events if e['Event_Type'] == 'idle'])} idle periods")
-
-
-# ============================================================================
-# Main Function
-# ============================================================================
-
-def run_bus_planning_from_dataframes(timetable_df: pd.DataFrame,
-                                     distance_matrix_df: pd.DataFrame,
-                                     output_file: str,
-                                     charging_station: str = "DEPOT",
-                                     garage_location: str = "GARAGE"):
-    """
-    Run complete bus planning from DataFrames.
-    Returns assignments for further analysis.
-    """
-    print("=" * 80)
-    print("BUS PLANNING SYSTEM - STARTING")
-    print("=" * 80)
     
+    return pd.DataFrame(all_events)
+
+
+# ============================================================================
+# Main Planning Function
+# ============================================================================
+
+def create_bus_planning(timetable_df: pd.DataFrame,
+                       distance_matrix_df: pd.DataFrame,
+                       charging_station: str = "DEPOT",
+                       garage_location: str = "GARAGE",
+                       driving_usage: float = 1.2,
+                       idle_usage: float = 5.0,
+                       charging_speed: float = 450.0,
+                       soh: float = 90.0,
+                       startbat: float = 100.0) -> pd.DataFrame:
+    """
+    Main function to create bus planning from timetable and distance matrix.
+    
+    Args:
+        timetable_df: DataFrame with columns: start, departure_time, end, line
+        distance_matrix_df: DataFrame with columns: start, end, min_travel_time, max_travel_time, distance_m, line
+        charging_station: Name of charging station location
+        garage_location: Name of garage location
+        driving_usage: Energy consumption per km (kWh/km)
+        idle_usage: Energy consumption per hour while idle (kWh/h)
+        charging_speed: Fast charging speed (kWh/h)
+        soh: State of Health (percentage)
+        startbat: Starting battery percentage
+    
+    Returns:
+        DataFrame with complete planning including all events
+    """
+    # Update constants based on parameters
+    BusConstants.CONSUMPTION_PER_KM = driving_usage
+    BusConstants.IDLE_CONSUMPTION_PER_HOUR = idle_usage
+    BusConstants.FAST_CHARGE_RATE = charging_speed
+    BusConstants.AGING_FACTOR = soh / 100.0
+    BusConstants.BATTERY_CAPACITY = BusConstants.ORIGINAL_BATTERY_CAPACITY * BusConstants.AGING_FACTOR
+    
+    # Load data
     loader = DataLoader()
     distance_dict, time_dict, distance_df = loader.load_distance_matrix_from_df(distance_matrix_df)
     rides = loader.load_timetable_from_df(timetable_df, distance_df)
     
     if not rides:
-        print("ERROR: No rides loaded!")
-        return None
+        raise ValueError("No rides loaded from timetable!")
     
+    # Create planning objects
     distance_matrix = DistanceMatrix(distance_dict, time_dict)
-    charging_planner = ChargingPlanner(charging_station)
-    scheduler = BusScheduler(distance_matrix, charging_planner, garage_location)
+    charging_planner = ChargingPlanner(charging_station, charging_speed, 60)
+    scheduler = BusScheduler(distance_matrix, charging_planner, garage_location, 
+                            driving_usage, idle_usage)
     
+    # Create initial bus with starting battery level
+    start_battery_kwh = BusConstants.BATTERY_CAPACITY * (startbat / 100.0)
     initial_buses = [
-        Bus("BUS_1", garage_location, BusConstants.BATTERY_CAPACITY, 
+        Bus("BUS_1", garage_location, start_battery_kwh, 
             rides[0].start_time - timedelta(hours=1))
     ]
     
-    print(f"\nScheduling {len(rides)} rides...")
+    # Schedule all rides
     assignments = scheduler.schedule_all_rides(rides, initial_buses)
     
-    exporter = ExcelExporter()
-    exporter.export_planning(assignments, output_file)
+    # Convert to DataFrame
+    planning_df = assignments_to_dataframe(assignments)
     
-    print("\n" + "=" * 80)
-    print("BUS PLANNING COMPLETE!")
-    print("=" * 80)
-    
-    return assignments
+    return planning_df
