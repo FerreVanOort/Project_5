@@ -23,7 +23,7 @@ page = st.sidebar.radio(
 )
 # , "Planning Maker" TERUG TOEVOEGEN VOOR PLANNING MAKER DEADLINE
 
-# Session defaults
+# Session defaults - Initialize ALL at startup BEFORE any page logic
 if "driving_usage" not in st.session_state:
     st.session_state.driving_usage = 1.2
 if "idle_usage" not in st.session_state:
@@ -36,6 +36,10 @@ if "minbat" not in st.session_state:
     st.session_state.minbat = 10.0
 if "startbat" not in st.session_state:
     st.session_state.startbat = 100.0
+if "charging_station" not in st.session_state:
+    st.session_state.charging_station = "ehvgar"
+if "garage_location" not in st.session_state:
+    st.session_state.garage_location = "ehvgar"
 
 
 # -------------------------------------------------
@@ -166,19 +170,6 @@ if page == "Planning Checker":
 elif page == "Planning Maker":
     st.title("Prototype Group 8 - Bus Planning Maker", anchor='group 8')
     st.subheader("Create a complete bus planning from timetable and distance matrix")
-    
-    st.info("""
-    **Upload timetable and distance matrix to automatically generate a bus planning.**
-    
-    The Planning Maker will:
-    - Assign rides to buses efficiently
-    - Plan charging sessions when needed
-    - Track deadhead trips (empty rides to start location)
-    - Monitor idle periods
-    - Ensure battery levels stay above minimum
-    
-    All settings from Advanced Options will be applied automatically.
-    """)
 
     uploaded_timetable_maker = st.file_uploader(
         "Upload timetable (.xlsx)", 
