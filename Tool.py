@@ -168,7 +168,7 @@ if page == "Planning Checker":
 # Page 2 - Planning Maker
 # -------------------------------------------------
 elif page == "Planning Maker":
-    st.title("Prototype Group 8 - Bus Planning Maker - WORK IN PROGRESS", anchor='group 8')
+    st.title("Prototype Group 8 - Bus Planning Maker", anchor='group 8')
     st.subheader("Create a complete bus planning from timetable and distance matrix")
 
     uploaded_timetable_maker = st.file_uploader(
@@ -210,7 +210,7 @@ elif page == "Planning Maker":
             st.success("Files successfully loaded!")
             
             # Create planning button
-            if st.button("🚀 Create Bus Planning", type="primary"):
+            if st.button("Create Bus Planning", type="primary"):
                 with st.spinner("Creating bus planning... This may take a moment."):
                     try:
                         # Create planning using the Planning Maker
