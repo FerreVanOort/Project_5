@@ -382,7 +382,9 @@ def create_bus_planning(timetable_df: pd.DataFrame,
                         charging_speed: float = 450.0,
                         soh: float = 90.0,
                         startbat: float = 100.0) -> pd.DataFrame:
-
+    """
+    Main function to create bus planning from timetable and distance matrix.
+    """
     # Update constants
     BusConstants.CONSUMPTION_PER_KM = driving_usage
     BusConstants.IDLE_CONSUMPTION_PER_HOUR = idle_usage
@@ -390,33 +392,63 @@ def create_bus_planning(timetable_df: pd.DataFrame,
     BusConstants.AGING_FACTOR = soh / 100.0
     BusConstants.BATTERY_CAPACITY = BusConstants.ORIGINAL_BATTERY_CAPACITY * BusConstants.AGING_FACTOR
 
-    # Load distance matrix
-    distance_dict = {(row['start'], row['end']): float(row['distance_m']) for _, row in distance_matrix_df.iterrows()}
-    time_dict = {(row['start'], row['end']): (float(row['min_travel_time']) + float(row['max_travel_time'])) / 2
-                 for _, row in distance_matrix_df.iterrows()}
+    # Distance dicts
+    distance_dict = {}
+    time_dict = {}
+    for idx, row in distance_matrix_df.iterrows():
+        start = str(row['start']).strip()
+        end = str(row['end']).strip()
+        distance_dict[(start, end)] = float(row['distance_m'])
+        time_dict[(start, end)] = (float(row['min_travel_time']) + float(row['max_travel_time'])) / 2
+
     distance_matrix = DistanceMatrix(distance_dict, time_dict)
     charging_planner = ChargingPlanner(charging_station, charging_speed, 60)
-    scheduler = BusScheduler(distance_matrix, charging_planner, garage_location, driving_usage, idle_usage)
+    scheduler = BusScheduler(distance_matrix, charging_planner, garage_location,
+                             driving_usage, idle_usage)
 
-    # Load rides
+    # Convert timetable to Ride objects with distance
     rides = []
     for idx, row in timetable_df.iterrows():
-        start_time = pd.to_datetime(row['departure_time'])
-        end_time = start_time + timedelta(minutes=(int(row['avg_travel_time']) if 'avg_travel_time' in row else 10))
-        ride_id = f"{row['line']}_{row['start']}_{start_time.strftime('%H%M')}_{idx}"
+        start_stop = str(row['start']).strip()
+        end_stop = str(row['end']).strip()
+        line = str(row['line']).strip() if 'line' in row else ""
+
+        departure_time = pd.to_datetime(row['departure_time'])
+        # Overnight adjustment
+        if departure_time.hour < 4 and idx > 0:
+            prev_departure = pd.to_datetime(timetable_df.iloc[idx-1]['departure_time'])
+            if prev_departure.hour >= 4:
+                departure_time += timedelta(days=1)
+
+        # Zoek afstand
+        distance_m = distance_dict.get((start_stop, end_stop), 5000)
+        avg_travel_time = time_dict.get((start_stop, end_stop), 10)
+
+        arrival_time = departure_time + timedelta(minutes=avg_travel_time)
+        ride_id = f"{line}_{start_stop}_{departure_time.strftime('%H%M')}_{idx}"
+
         rides.append(Ride(
             ride_id=ride_id,
-            start_stop=row['start'],
-            end_stop=row['end'],
-            start_time=start_time,
-            end_time=end_time,
-            distance_meters=float(row['distance_m']),
-            line=row['line']
+            start_stop=start_stop,
+            end_stop=end_stop,
+            start_time=departure_time,
+            end_time=arrival_time,
+            distance_meters=float(distance_m),
+            line=line
         ))
 
-    start_battery_kwh = BusConstants.BATTERY_CAPACITY * (startbat / 100.0)
-    initial_buses = [Bus("BUS_1", garage_location, start_battery_kwh, rides[0].start_time - timedelta(hours=1))]
+    if not rides:
+        raise ValueError("No rides loaded from timetable!")
 
-    assignments = schedule_all_rides(rides, initial_buses, scheduler)
+    # Initial bus
+    start_battery_kwh = BusConstants.BATTERY_CAPACITY * (startbat / 100.0)
+    initial_buses = [Bus("BUS_1", garage_location, start_battery_kwh,
+                         rides[0].start_time - timedelta(hours=1))]
+
+    # Schedule all rides
+    assignments = scheduler.schedule_all_rides(rides, initial_buses)
+
+    # Convert to DataFrame
     planning_df = assignments_to_dataframe(assignments)
+
     return planning_df
