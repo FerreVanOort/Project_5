@@ -544,56 +544,55 @@ def assign_ride_to_bus(self, bus: Bus, ride: Ride) -> Assignment:
 
     return assignment
     
-def schedule_all_rides(self, rides: List[Ride], 
-                          initial_buses: List[Bus]) -> List[Assignment]:
-        """Schedule all rides using greedy assignment."""
-        sorted_rides = sorted(rides, key=lambda r: r.start_time)
+def schedule_all_rides(self, rides: List[Ride], initial_buses: List[Bus]) -> List[Assignment]:
+    """Schedule all rides using greedy assignment."""
+    sorted_rides = sorted(rides, key=lambda r: r.start_time)
         
-        assignments = []
-        buses = [Bus(b.bus_id, b.current_location, b.current_battery_kwh, 
-                    b.available_from) for b in initial_buses]
+    assignments = []
+    buses = [Bus(b.bus_id, b.current_location, b.current_battery_kwh, 
+                b.available_from) for b in initial_buses]
         
-        for ride in sorted_rides:
-            best_bus = None
-            best_score = float('inf')
+    for ride in sorted_rides:
+        best_bus = None
+        best_score = float('inf')
             
-            for bus in buses:
-                can_serve, reason = self.can_bus_serve_ride(bus, ride)
-                if can_serve:
-                    deadhead_dist = self.distance_matrix.get_distance_km(
-                        bus.current_location, ride.start_stop)
-                    score = deadhead_dist * 2.0 + (1.0 - bus.battery_percent) * 10
-                    
-                    if score < best_score:
-                        best_score = score
-                        best_bus = bus
+        for bus in buses:
+            can_serve, reason = self.can_bus_serve_ride(bus, ride)
+            if can_serve:
+                deadhead_dist = self.distance_matrix.get_distance_km(
+                    bus.current_location, ride.start_stop)
+                score = deadhead_dist * 2.0 + (1.0 - bus.battery_percent) * 10
+                
+                if score < best_score:
+                    best_score = score
+                    best_bus = bus
             
-            if best_bus is None:
-                new_bus = Bus(
-                    f"BUS_{len(buses)+1}",
-                    self.garage_location,
-                    BusConstants.BATTERY_CAPACITY,
-                    sorted_rides[0].start_time - timedelta(hours=2)
-                )
-                buses.append(new_bus)
-                best_bus = new_bus
+        if best_bus is None:
+            new_bus = Bus(
+                f"BUS_{len(buses)+1}",
+                self.garage_location,
+                BusConstants.BATTERY_CAPACITY,
+                sorted_rides[0].start_time - timedelta(hours=2)
+            )
+            buses.append(new_bus)
+            best_bus = new_bus
             
-            # Assign ride with ALL events
-            assignment = self.assign_ride_to_bus(best_bus, ride)
-            assignments.append(assignment)
+        # Assign ride with ALL events
+        assignment = self.assign_ride_to_bus(best_bus, ride)
+        assignments.append(assignment)
             
-            # Update bus state
-            best_bus.current_location = ride.end_stop
-            best_bus.current_battery_kwh = assignment.battery_after_ride
-            best_bus.available_from = ride.end_time
-            
-            if best_bus.current_battery_kwh < BusConstants.BATTERY_CAPACITY * 0.15:
-                best_bus.current_battery_kwh = max(
-                    best_bus.current_battery_kwh,
-                    BusConstants.BATTERY_CAPACITY * 0.15
-                )
+        # Update bus state
+        best_bus.current_location = ride.end_stop
+        best_bus.current_battery_kwh = assignment.battery_after_ride
+        best_bus.available_from = ride.end_time
         
-        return assignments
+        if best_bus.current_battery_kwh < BusConstants.BATTERY_CAPACITY * 0.15:
+            best_bus.current_battery_kwh = max(
+                best_bus.current_battery_kwh,
+                BusConstants.BATTERY_CAPACITY * 0.15
+            )
+        
+    return assignments
 
 
 # ============================================================================
