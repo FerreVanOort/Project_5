@@ -544,7 +544,7 @@ def assign_ride_to_bus(self, bus: Bus, ride: Ride) -> Assignment:
 
     return assignment
     
-    def schedule_all_rides(self, rides: List[Ride], 
+def schedule_all_rides(self, rides: List[Ride], 
                           initial_buses: List[Bus]) -> List[Assignment]:
         """Schedule all rides using greedy assignment."""
         sorted_rides = sorted(rides, key=lambda r: r.start_time)
