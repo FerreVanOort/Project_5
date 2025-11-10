@@ -682,7 +682,7 @@ def create_bus_planning(timetable_df: pd.DataFrame,
     ]
     
     # Schedule all rides
-    assignments = scheduler.schedule_all_rides(rides, initial_buses)
+    assignments = schedule_all_rides(rides, initial_buses)
     
     # Convert to DataFrame
     planning_df = assignments_to_dataframe(assignments)
