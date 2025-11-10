@@ -476,6 +476,9 @@ def create_gannt_chart_2(planning: pd.DataFrame, base_day: datetime = None):
     ]
     for idx, g in enumerate(line_groups):
         color_map[g] = palette_cycle[idx % len(palette_cycle)]
+        
+    # Renaming
+    planning = planning.rename(columns = {"energy_kwh": "energy_consumption"})
 
     # Plot
     fig = px.timeline(
