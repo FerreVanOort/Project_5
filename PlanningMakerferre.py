@@ -414,14 +414,33 @@ class BusScheduler:
         if needs_charging:
             charger = self.charging_planner.charging_station
             
+            # Add DEADHEAD to charger if needed (as separate event)
             if current_location != charger:
-                energy_to_charger = self.distance_matrix.get_energy_for_deadhead(
-                    current_location, charger, self.consumption_per_km)
-                time_to_charger = self.distance_matrix.get_travel_time_minutes(
+                deadhead_to_charger_dist = self.distance_matrix.get_distance_km(
                     current_location, charger)
+                deadhead_to_charger_time = self.distance_matrix.get_travel_time_minutes(
+                    current_location, charger)
+                energy_to_charger = calculate_energy_consumption(deadhead_to_charger_dist, self.consumption_per_km)
                 
-                battery_at_charger = current_battery - energy_to_charger
-                arrival_at_charger = current_time + timedelta(minutes=time_to_charger)
+                battery_after_deadhead_to_charger = current_battery - energy_to_charger
+                arrival_at_charger = current_time + timedelta(minutes=deadhead_to_charger_time)
+                
+                # Add deadhead to charger event
+                deadhead_to_charger_event = Event(
+                    event_type='deadhead',
+                    bus_id=bus.bus_id,
+                    start_time=current_time,
+                    end_time=arrival_at_charger,
+                    start_location=current_location,
+                    end_location=charger,
+                    battery_before=current_battery,
+                    battery_after=battery_after_deadhead_to_charger,
+                    distance_km=deadhead_to_charger_dist,
+                    energy_consumed=energy_to_charger
+                )
+                assignment.events.append(deadhead_to_charger_event)
+                
+                battery_at_charger = battery_after_deadhead_to_charger
             else:
                 battery_at_charger = current_battery
                 arrival_at_charger = current_time
@@ -430,17 +449,22 @@ class BusScheduler:
             if battery_at_charger < min_battery_kwh:
                 battery_at_charger = min_battery_kwh + 10
             
+            # Calculate available charging time
             time_from_charger = self.distance_matrix.get_travel_time_minutes(
                 charger, ride.start_stop)
             time_available = (ride.start_time - arrival_at_charger).total_seconds() / 60
             available_for_charging = max(BusConstants.MIN_CHARGE_TIME, 
                                         time_available - time_from_charger - 5)
             
+            # Determine target charge level
+            # Target: charge to 80% or enough for next few rides, whichever is higher
             energy_after_charging_needed = (
                 self.distance_matrix.get_energy_for_deadhead(charger, ride.start_stop, self.consumption_per_km) +
                 ride_energy + 20
             )
-            target_charge = min(energy_after_charging_needed, BusConstants.BATTERY_CAPACITY)
+            min_target = energy_after_charging_needed
+            optimal_target = BusConstants.BATTERY_CAPACITY * 0.80  # Aim for 80%
+            target_charge = min(max(min_target, optimal_target), BusConstants.BATTERY_CAPACITY)
             
             charged_to, charge_duration = self.charging_planner.plan_charging_session(
                 Bus(bus.bus_id, charger, battery_at_charger, arrival_at_charger),
@@ -574,7 +598,7 @@ class BusScheduler:
                     f"BUS_{len(buses)+1}",
                     self.garage_location,
                     BusConstants.BATTERY_CAPACITY,
-                    sorted_rides[0].start_time - timedelta(hours=2)
+                    ride.start_time - timedelta(minutes=30)  # Start 30 min before first ride
                 )
                 buses.append(new_bus)
                 best_bus = new_bus
@@ -678,7 +702,7 @@ def create_bus_planning(timetable_df: pd.DataFrame,
     start_battery_kwh = BusConstants.BATTERY_CAPACITY * (startbat / 100.0)
     initial_buses = [
         Bus("BUS_1", garage_location, start_battery_kwh, 
-            rides[0].start_time - timedelta(hours=1))
+            rides[0].start_time - timedelta(minutes=30))  # Start 30 min before first ride
     ]
     
     # Schedule all rides
