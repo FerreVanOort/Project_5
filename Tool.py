@@ -228,24 +228,27 @@ elif page == "Planning Maker":
                         
                         st.success("✅ Bus planning successfully created!")
                         
-                        # Prepare planning for Gantt chart
-                        # Apply same processing as in Planning Checker
-                        planning_clean = fm.cleanup_excel(planning_result)
-                        planning_filled = fm.fill_idle_periods(planning_clean)
-                        planning_length = fm.length_activities(planning_filled)
+                        # The planning from create_bus_planning already has:
+                        # - All events (ride, charging, deadhead, idle)
+                        # - Energy consumption calculated
+                        # - Battery levels tracked
+                        # So we can use it directly for the Gantt chart
                         
-                        # Calculate energy for complete data
-                        planning_energy = fm.calculate_energy_consumption(
-                            planning_length,
-                            distancematrix_maker,
-                            driving_usage=st.session_state.driving_usage,
-                            idle_usage=st.session_state.idle_usage,
-                            charging_speed=st.session_state.charging_speed
-                        )
+                        # Rename columns to match what Gantt chart expects
+                        planning_for_gantt = planning_result.rename(columns={
+                            'omloop_nummer': 'bus',
+                            'activiteit': 'activity',
+                            'starttijd': 'start_time',
+                            'eindtijd': 'end_time',
+                            'startlocatie': 'start_location',
+                            'eindlocatie': 'end_location',
+                            'lijn': 'line',
+                            'energieverbruik': 'energy_kwh'
+                        })
                         
                         # Show Gantt Chart
                         st.header("Gantt Chart of Generated Bus Planning")
-                        fm.create_gannt_chart(planning_energy)
+                        fm.create_gannt_chart(planning_for_gantt)
                         
                         # Download button
                         st.header("Download Planning")
