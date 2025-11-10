@@ -404,12 +404,6 @@ def create_gannt_chart(planning: pd.DataFrame, base_day: datetime = None):
 def create_gannt_chart_2(planning: pd.DataFrame, base_day: datetime = None):
     """
     Builds a Gantt chart in Streamlit using datetime objects.
-    
-    Input:
-        Bus planning as a Pandas DataFrame
-        
-    Output:
-        Gantt chart displayed in Streamlit tool
     """
 
     planning = planning.copy()
@@ -423,12 +417,19 @@ def create_gannt_chart_2(planning: pd.DataFrame, base_day: datetime = None):
     start_cutoff = datetime.combine(base_day.date(), time(0, 0, 0))   # 00:00
     end_cutoff = datetime.combine(base_day.date(), time(3, 0, 0))     # 03:00
 
-    # Convert start/end to datetime first (using base_day as reference)
+    # Convert start/end to datetime (handle both time and Timestamp)
+    def _to_time(value):
+        if isinstance(value, pd.Timestamp):
+            return value.time()
+        return value
+
     planning["start_dt"] = planning.apply(
-        lambda r: datetime.combine(base_day.date(), r["start_time"]), axis=1
+        lambda r: datetime.combine(base_day.date(), _to_time(r["start_time"])),
+        axis=1
     )
     planning["end_dt"] = planning.apply(
-        lambda r: datetime.combine(base_day.date(), r["end_time"]), axis=1
+        lambda r: datetime.combine(base_day.date(), _to_time(r["end_time"])),
+        axis=1
     )
 
     # Handle overnight trips (end before start)
@@ -460,22 +461,15 @@ def create_gannt_chart_2(planning: pd.DataFrame, base_day: datetime = None):
 
     planning["display_group"] = planning.apply(_pick_display_group, axis=1)
 
-    # Fixed colors for non-line activities
+    # Colors
     base_colors = {
         "charging": "green",
         "idle": "gray",
         "material trip": "orange",
         "service trip (unknown line)": "blue",
     }
-
-    # Palette for unique line colors
-    palette_cycle = [
-        "blue", "purple", "red", "brown",
-        "pink", "cyan", "olive", "magenta"
-    ]
+    palette_cycle = ["blue", "purple", "red", "brown", "pink", "cyan", "olive", "magenta"]
     color_map = dict(base_colors)
-
-    # Add dynamic colors for lines
     line_groups = [
         g for g in planning["display_group"].unique()
         if isinstance(g, str) and g.startswith("service trip line ")
@@ -483,7 +477,7 @@ def create_gannt_chart_2(planning: pd.DataFrame, base_day: datetime = None):
     for idx, g in enumerate(line_groups):
         color_map[g] = palette_cycle[idx % len(palette_cycle)]
 
-    # Build timeline chart
+    # Plot
     fig = px.timeline(
         planning,
         x_start="start_dt",
@@ -503,10 +497,7 @@ def create_gannt_chart_2(planning: pd.DataFrame, base_day: datetime = None):
         ],
     )
 
-    # Flip Y-axis so first bus is on top
     fig.update_yaxes(autorange="reversed")
-
-    # X-axis HH:MM formatting
     fig.update_xaxes(tickformat="%H:%M")
 
     fig.update_layout(
