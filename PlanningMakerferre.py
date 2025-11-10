@@ -466,7 +466,7 @@ class BusScheduler:
                 
                 # Add deadhead to charger event
                 deadhead_to_charger_event = Event(
-                    event_type='material trip',
+                    event_type='deadhead',
                     bus_id=bus.bus_id,
                     start_time=current_time,
                     end_time=arrival_at_charger,
@@ -544,7 +544,7 @@ class BusScheduler:
             
             # Add DEADHEAD EVENT
             deadhead_event = Event(
-                event_type='material trip',
+                event_type='deadhead',
                 bus_id=bus.bus_id,
                 start_time=departure_for_deadhead,
                 end_time=arrival_at_start,
@@ -590,7 +590,7 @@ class BusScheduler:
         battery_after_ride = current_battery - ride_energy
         
         ride_event = Event(
-            event_type='service trip',
+            event_type='ride',
             bus_id=bus.bus_id,
             start_time=ride.start_time,
             end_time=ride.end_time,
