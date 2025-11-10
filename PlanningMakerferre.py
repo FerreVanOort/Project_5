@@ -544,55 +544,50 @@ def assign_ride_to_bus(self, bus: Bus, ride: Ride) -> Assignment:
 
     return assignment
     
-def schedule_all_rides(self, rides: List[Ride], initial_buses: List[Bus]) -> List[Assignment]:
-    """Schedule all rides using greedy assignment."""
+def schedule_all_rides(rides: List[Ride], initial_buses: List[Bus], scheduler: BusScheduler) -> List[Assignment]:
+    """Schedule all rides using a scheduler object."""
     sorted_rides = sorted(rides, key=lambda r: r.start_time)
-        
     assignments = []
-    buses = [Bus(b.bus_id, b.current_location, b.current_battery_kwh, 
-                b.available_from) for b in initial_buses]
-        
+    buses = [Bus(b.bus_id, b.current_location, b.current_battery_kwh, b.available_from) for b in initial_buses]
+
     for ride in sorted_rides:
         best_bus = None
         best_score = float('inf')
-            
+
         for bus in buses:
-            can_serve, reason = self.can_bus_serve_ride(bus, ride)
+            can_serve, reason = scheduler.can_bus_serve_ride(bus, ride)
             if can_serve:
-                deadhead_dist = self.distance_matrix.get_distance_km(
-                    bus.current_location, ride.start_stop)
+                deadhead_dist = scheduler.distance_matrix.get_distance_km(bus.current_location, ride.start_stop)
                 score = deadhead_dist * 2.0 + (1.0 - bus.battery_percent) * 10
-                
+
                 if score < best_score:
                     best_score = score
                     best_bus = bus
-            
+
         if best_bus is None:
             new_bus = Bus(
                 f"BUS_{len(buses)+1}",
-                self.garage_location,
+                scheduler.garage_location,
                 BusConstants.BATTERY_CAPACITY,
                 sorted_rides[0].start_time - timedelta(hours=2)
             )
             buses.append(new_bus)
             best_bus = new_bus
-            
-        # Assign ride with ALL events
-        assignment = self.assign_ride_to_bus(best_bus, ride)
+
+        # Assign ride with all events
+        assignment = scheduler.assign_ride_to_bus(best_bus, ride)
         assignments.append(assignment)
-            
+
         # Update bus state
         best_bus.current_location = ride.end_stop
         best_bus.current_battery_kwh = assignment.battery_after_ride
         best_bus.available_from = ride.end_time
-        
+
         if best_bus.current_battery_kwh < BusConstants.BATTERY_CAPACITY * 0.15:
-            best_bus.current_battery_kwh = max(
-                best_bus.current_battery_kwh,
-                BusConstants.BATTERY_CAPACITY * 0.15
-            )
-        
+            best_bus.current_battery_kwh = max(best_bus.current_battery_kwh, BusConstants.BATTERY_CAPACITY * 0.15)
+
     return assignments
+
 
 
 # ============================================================================
@@ -682,7 +677,7 @@ def create_bus_planning(timetable_df: pd.DataFrame,
     ]
     
     # Schedule all rides
-    assignments = scheduler.schedule_all_rides(rides, initial_buses)
+    assignments = schedule_all_rides(rides, initial_buses)
     
     # Convert to DataFrame
     planning_df = assignments_to_dataframe(assignments)
