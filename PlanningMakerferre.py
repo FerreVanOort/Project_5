@@ -384,10 +384,12 @@ class BusScheduler:
             self.charging_planner.charging_station, ride.start_stop)
         
         available_time = (ride.start_time - bus.available_from).total_seconds() / 60
-        available_time -= (time_to_charger + time_from_charger)
-        
-        if available_time < BusConstants.MIN_CHARGE_TIME:
-            return False, "Insufficient time for charging"
+        total_transit_time = time_to_charger + time_from_charger
+
+        required_time = total_transit_time + BusConstants.MIN_CHARGE_TIME
+
+        if available_time < required_time:
+            return False, f"Overlap risk: only {available_time:.1f} min free, need {required_time:.1f}."
         
         return True, None
     
