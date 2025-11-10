@@ -607,25 +607,27 @@ class BusScheduler:
 # ============================================================================
 
 def assignments_to_dataframe(assignments: List[Assignment]) -> pd.DataFrame:
-    """Convert assignments to DataFrame for export or display."""
+    """Convert assignments to DataFrame in export-ready format."""
     all_events = []
     for assignment in assignments:
         for event in assignment.events:
             all_events.append({
-                'omloop_nummer': event.bus_id,
-                'activiteit': event.event_type,
-                'starttijd': event.start_time,
-                'eindtijd': event.end_time,
-                'startlocatie': event.start_location,
-                'eindlocatie': event.end_location,
-                'distance_km': round(event.distance_km, 2),
-                'energieverbruik': round(event.energy_consumed, 2),
-                'SOC_start': round(event.battery_percent_before, 1),
-                'SOC_eind': round(event.battery_percent_after, 1),
-                'lijn': event.line if event.line else ''
+                'start_location': event.start_location,
+                'end_location': event.end_location,
+                'start_time': event.start_time,
+                'end_time': event.end_time,
+                'activity': event.event_type,
+                'line': event.line if event.line else '',
+                'energy_consumption': round(event.energy_consumed, 2),
+                'bus': event.bus_id
             })
     
-    return pd.DataFrame(all_events)
+    # Zet in juiste kolomvolgorde
+    df = pd.DataFrame(all_events)[[
+        'start_location', 'end_location', 'start_time', 'end_time',
+        'activity', 'line', 'energy_consumption', 'bus'
+    ]]
+    return df
 
 
 # ============================================================================
