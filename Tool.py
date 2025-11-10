@@ -209,13 +209,6 @@ elif page == "Planning Maker":
             
             st.success("Files successfully loaded!")
             
-            # Show preview of uploaded data
-            with st.expander("Preview Timetable"):
-                st.dataframe(timetable_maker.head(10))
-            
-            with st.expander("Preview Distance Matrix"):
-                st.dataframe(distancematrix_maker.head(10))
-            
             # Create planning button
             if st.button("🚀 Create Bus Planning", type="primary"):
                 with st.spinner("Creating bus planning... This may take a moment."):
@@ -235,40 +228,24 @@ elif page == "Planning Maker":
                         
                         st.success("✅ Bus planning successfully created!")
                         
-                        # Show statistics
-                        st.header("Planning Statistics")
-                        col1, col2, col3, col4 = st.columns(4)
+                        # Prepare planning for Gantt chart
+                        # Apply same processing as in Planning Checker
+                        planning_clean = fm.cleanup_excel(planning_result)
+                        planning_filled = fm.fill_idle_periods(planning_clean)
+                        planning_length = fm.length_activities(planning_filled)
                         
-                        with col1:
-                            total_buses = planning_result['omloop_nummer'].nunique()
-                            st.metric("Total Buses", total_buses)
+                        # Calculate energy for complete data
+                        planning_energy = fm.calculate_energy_consumption(
+                            planning_length,
+                            distancematrix_maker,
+                            driving_usage=st.session_state.driving_usage,
+                            idle_usage=st.session_state.idle_usage,
+                            charging_speed=st.session_state.charging_speed
+                        )
                         
-                        with col2:
-                            total_rides = len(planning_result[planning_result['activiteit'] == 'ride'])
-                            st.metric("Total Rides", total_rides)
-                        
-                        with col3:
-                            total_charging = len(planning_result[planning_result['activiteit'] == 'charging'])
-                            st.metric("Charging Sessions", total_charging)
-                        
-                        with col4:
-                            total_idle = len(planning_result[planning_result['activiteit'] == 'idle'])
-                            st.metric("Idle Periods", total_idle)
-                        
-                        # Show event breakdown
-                        st.header("Event Breakdown")
-                        event_counts = planning_result['activiteit'].value_counts()
-                        col1, col2 = st.columns([1, 2])
-                        
-                        with col1:
-                            st.dataframe(event_counts.rename("Count"), use_container_width=True)
-                        
-                        with col2:
-                            st.bar_chart(event_counts)
-                        
-                        # Show detailed planning
-                        st.header("Detailed Planning")
-                        st.dataframe(planning_result, use_container_width=True)
+                        # Show Gantt Chart
+                        st.header("Gantt Chart of Generated Bus Planning")
+                        fm.create_gannt_chart(planning_energy)
                         
                         # Download button
                         st.header("Download Planning")
@@ -286,13 +263,6 @@ elif page == "Planning Maker":
                             file_name=f"bus_planning_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
                         )
-                        
-                        st.info("""
-                        **Next steps:**
-                        1. Download the generated planning
-                        2. Go to 'Planning Checker' to validate the planning
-                        3. Review the Gantt chart and all checks
-                        """)
                         
                     except Exception as e:
                         st.error(f"Error creating planning: {str(e)}")
