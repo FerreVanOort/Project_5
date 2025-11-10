@@ -134,10 +134,14 @@ class ChargingPlanner:
 # ====================================================================
 
 class BusScheduler:
-    def __init__(self, distance_matrix: DistanceMatrix, charging_planner: ChargingPlanner, garage_location: str):
+    def __init__(self, distance_matrix: DistanceMatrix, charging_planner: ChargingPlanner,
+                 garage_location: str, consumption_per_km: float = BusConstants.CONSUMPTION_PER_KM,
+                 idle_per_hour: float = BusConstants.IDLE_CONSUMPTION_PER_HOUR):
         self.distance_matrix = distance_matrix
         self.charging_planner = charging_planner
         self.garage_location = garage_location
+        self.consumption_per_km = consumption_per_km
+        self.idle_per_hour = idle_per_hour
 
     def assign_ride_to_bus(self, bus: Bus, ride: Ride) -> Assignment:
         """Create a complete assignment with ALL events tracked including IDLE, without overlaps."""
