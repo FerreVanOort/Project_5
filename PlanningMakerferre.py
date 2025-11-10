@@ -140,78 +140,156 @@ class BusScheduler:
         self.garage_location = garage_location
 
     def assign_ride_to_bus(self, bus: Bus, ride: Ride) -> Assignment:
-        assignment = Assignment(bus.bus_id, ride)
-        current_time = bus.available_from
+        """Create a complete assignment with ALL events tracked including IDLE, without overlaps."""
+        assignment = Assignment(bus_id=bus.bus_id, ride=ride, events=[])
+
+        # Starttijd voor planning: altijd het laatste beschikbare moment van de bus
+        current_time = max(bus.available_from, bus.available_from)
         current_battery = bus.current_battery_kwh
         current_location = bus.current_location
 
-        # Energy needed
-        deadhead_energy = self.distance_matrix.get_energy_for_deadhead(current_location, ride.start_stop)
-        ride_energy = calculate_energy_consumption(ride.distance_km)
-        total_needed = deadhead_energy + ride_energy
-        safe_needed = total_needed * 1.3  # 30% buffer
+        # Bereken energiebehoefte
+        deadhead_energy = self.distance_matrix.get_energy_for_deadhead(current_location, ride.start_stop, self.consumption_per_km)
+        ride_energy = calculate_energy_consumption(ride.distance_km, self.consumption_per_km)
+        total_energy_needed = deadhead_energy + ride_energy
+        safe_energy_needed = total_energy_needed * 1.3  # buffer
 
-        # NEED CHARGING
-        if current_battery < safe_needed:
-            # Deadhead to charger if not already there
-            if current_location != self.charging_planner.station:
-                dh_dist = self.distance_matrix.get_distance_km(current_location, self.charging_planner.station)
-                dh_time = self.distance_matrix.get_travel_time_minutes(current_location, self.charging_planner.station)
-                dh_energy = calculate_energy_consumption(dh_dist)
-                event = Event("deadhead", bus.bus_id, current_time, current_time+timedelta(minutes=dh_time),
-                              current_location, self.charging_planner.station,
-                              current_battery, current_battery-dh_energy, dh_dist, dh_energy)
-                assignment.events.append(event)
-                current_time += timedelta(minutes=dh_time)
-                current_battery -= dh_energy
-                current_location = self.charging_planner.station
+        # -----------------------
+        # CHARGING BESLUIT
+        # -----------------------
+        battery_percent = current_battery / BusConstants.BATTERY_CAPACITY
+        needs_charging = battery_percent < 0.40 or current_battery < safe_energy_needed
 
-            # Charging
-            energy_needed = min(BusConstants.BATTERY_CAPACITY, safe_needed)
-            available_minutes = max(0, (ride.start_time - current_time).total_seconds()/60)
-            charged_to, charge_duration = self.charging_planner.plan_charging(Bus(bus.bus_id, current_location, current_battery, current_time),
-                                                                             energy_needed, available_minutes)
-            charge_event = Event("charging", bus.bus_id, current_time, current_time+timedelta(minutes=charge_duration),
-                                 current_location, current_location, current_battery, charged_to, 0, -(charged_to-current_battery))
-            assignment.events.append(charge_event)
-            current_time += timedelta(minutes=charge_duration)
+        if needs_charging:
+            charger = self.charging_planner.charging_station
+
+            # DEADHEAD naar charger als nodig
+            if current_location != charger:
+                deadhead_to_charger_energy = self.distance_matrix.get_energy_for_deadhead(current_location, charger, self.consumption_per_km)
+                deadhead_to_charger_time = self.distance_matrix.get_travel_time_minutes(current_location, charger)
+                arrival_at_charger = current_time + timedelta(minutes=deadhead_to_charger_time)
+                battery_after_deadhead = current_battery - deadhead_to_charger_energy
+
+                deadhead_event = Event(
+                    event_type='deadhead',
+                    bus_id=bus.bus_id,
+                    start_time=current_time,
+                    end_time=arrival_at_charger,
+                    start_location=current_location,
+                    end_location=charger,
+                    battery_before=current_battery,
+                    battery_after=battery_after_deadhead,
+                    distance_km=self.distance_matrix.get_distance_km(current_location, charger),
+                    energy_consumed=deadhead_to_charger_energy
+                )
+                assignment.events.append(deadhead_event)
+                current_time = arrival_at_charger
+                current_battery = battery_after_deadhead
+                current_location = charger
+
+            # Bereken beschikbare tijd tot start rit
+            time_to_ride = (ride.start_time - current_time).total_seconds() / 60
+            time_available_for_charging = max(BusConstants.MIN_CHARGE_TIME, time_to_ride)
+
+            # Bepaal target charge
+            target_charge = min(BusConstants.BATTERY_CAPACITY * 0.8, BusConstants.BATTERY_CAPACITY)
+            charged_to, charge_duration = self.charging_planner.plan_charging_session(
+                Bus(bus.bus_id, charger, current_battery, current_time),
+                target_charge,
+                time_available_for_charging
+            )
+            departure_from_charger = current_time + timedelta(minutes=charge_duration)
+
+            # Voeg CHARGING event toe
+            charging_event = Event(
+                event_type='charging',
+                bus_id=bus.bus_id,
+                start_time=current_time,
+                end_time=departure_from_charger,
+                start_location=charger,
+                end_location=charger,
+                battery_before=current_battery,
+                battery_after=charged_to,
+                energy_consumed=-(charged_to - current_battery)
+            )
+            assignment.events.append(charging_event)
+            current_time = departure_from_charger
             current_battery = charged_to
 
-        # Deadhead to ride start
+        # -----------------------
+        # DEADHEAD naar ritstart
+        # -----------------------
         if current_location != ride.start_stop:
-            dh_dist = self.distance_matrix.get_distance_km(current_location, ride.start_stop)
-            dh_time = self.distance_matrix.get_travel_time_minutes(current_location, ride.start_stop)
-            dh_energy = calculate_energy_consumption(dh_dist)
-            event = Event("deadhead", bus.bus_id, current_time, current_time+timedelta(minutes=dh_time),
-                          current_location, ride.start_stop,
-                          current_battery, current_battery-dh_energy, dh_dist, dh_energy)
-            assignment.events.append(event)
-            current_time += timedelta(minutes=dh_time)
-            current_battery -= dh_energy
+            deadhead_energy = self.distance_matrix.get_energy_for_deadhead(current_location, ride.start_stop, self.consumption_per_km)
+            deadhead_time = self.distance_matrix.get_travel_time_minutes(current_location, ride.start_stop)
+            arrival_at_start = current_time + timedelta(minutes=deadhead_time)
+            battery_after_deadhead = current_battery - deadhead_energy
+
+            deadhead_event = Event(
+                event_type='deadhead',
+                bus_id=bus.bus_id,
+                start_time=current_time,
+                end_time=arrival_at_start,
+                start_location=current_location,
+                end_location=ride.start_stop,
+                battery_before=current_battery,
+                battery_after=battery_after_deadhead,
+                distance_km=self.distance_matrix.get_distance_km(current_location, ride.start_stop),
+                energy_consumed=deadhead_energy
+            )
+            assignment.events.append(deadhead_event)
+            current_time = arrival_at_start
+            current_battery = battery_after_deadhead
             current_location = ride.start_stop
 
-        # Idle if early
+        # -----------------------
+        # IDLE tot ritstart
+        # -----------------------
         if current_time < ride.start_time:
-            idle_minutes = (ride.start_time - current_time).total_seconds()/60
-            idle_energy = calculate_idle_consumption(idle_minutes)
-            event = Event("idle", bus.bus_id, current_time, ride.start_time,
-                          current_location, current_location,
-                          current_battery, current_battery-idle_energy, 0, idle_energy)
-            assignment.events.append(event)
-            current_battery -= idle_energy
-            current_time = ride.start_time
+            idle_minutes = (ride.start_time - current_time).total_seconds() / 60
+            idle_energy = calculate_idle_consumption(idle_minutes, self.idle_per_hour)
+            battery_after_idle = current_battery - idle_energy
 
-        # Ride
-        ride_event = Event("ride", bus.bus_id, ride.start_time, ride.end_time,
-                           ride.start_stop, ride.end_stop,
-                           current_battery, current_battery-ride_energy,
-                           ride.distance_km, ride_energy, ride.ride_id, ride.line)
+            idle_event = Event(
+                event_type='idle',
+                bus_id=bus.bus_id,
+                start_time=current_time,
+                end_time=ride.start_time,
+                start_location=ride.start_stop,
+                end_location=ride.start_stop,
+                battery_before=current_battery,
+                battery_after=battery_after_idle,
+                energy_consumed=idle_energy
+            )
+            assignment.events.append(idle_event)
+            current_time = ride.start_time
+            current_battery = battery_after_idle
+
+        # -----------------------
+        # RIT uitvoeren
+        # -----------------------
+        battery_after_ride = current_battery - ride_energy
+        ride_event = Event(
+            event_type='ride',
+            bus_id=bus.bus_id,
+            start_time=ride.start_time,
+            end_time=ride.end_time,
+            start_location=ride.start_stop,
+            end_location=ride.end_stop,
+            battery_before=current_battery,
+            battery_after=battery_after_ride,
+            distance_km=ride.distance_km,
+            energy_consumed=ride_energy,
+            ride_id=ride.ride_id,
+            line=ride.line
+        )
         assignment.events.append(ride_event)
-        current_battery -= ride_energy
         current_time = ride.end_time
+        current_battery = battery_after_ride
         current_location = ride.end_stop
 
         return assignment
+
 
     def schedule_all_rides(self, rides: List[Ride], initial_buses: List[Bus]) -> List[Assignment]:
         rides_sorted = sorted(rides, key=lambda r: r.start_time)
