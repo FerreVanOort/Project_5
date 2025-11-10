@@ -401,6 +401,125 @@ def create_gannt_chart(planning: pd.DataFrame, base_day: datetime = None):
 
     return st.plotly_chart(fig)
 
+def create_gannt_chart_2(planning: pd.DataFrame, base_day: datetime = None):
+    """
+    Builds a Gantt chart in Streamlit using datetime objects.
+    
+    Input:
+        Bus planning as a Pandas DataFrame
+        
+    Output:
+        Gantt chart displayed in Streamlit tool
+    """
+
+    planning = planning.copy()
+
+    # Reference day (midnight base)
+    if base_day is None:
+        base_day = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
+    planning["planning_day"] = base_day
+
+    # Define datetime cutoffs (now datetime objects)
+    start_cutoff = datetime.combine(base_day.date(), time(0, 0, 0))   # 00:00
+    end_cutoff = datetime.combine(base_day.date(), time(3, 0, 0))     # 03:00
+
+    # Convert start/end to datetime first (using base_day as reference)
+    planning["start_dt"] = planning.apply(
+        lambda r: datetime.combine(base_day.date(), r["start_time"]), axis=1
+    )
+    planning["end_dt"] = planning.apply(
+        lambda r: datetime.combine(base_day.date(), r["end_time"]), axis=1
+    )
+
+    # Handle overnight trips (end before start)
+    planning.loc[planning["end_dt"] < planning["start_dt"], "end_dt"] += timedelta(days=1)
+
+    # Anything starting between 00:00–03:00 belongs to the next calendar day
+    mask_next_day = (planning["start_dt"] >= start_cutoff) & (planning["start_dt"] <= end_cutoff)
+    planning.loc[mask_next_day, "start_dt"] += timedelta(days=1)
+    planning.loc[mask_next_day, "end_dt"] += timedelta(days=1)
+
+    # Duration in minutes
+    planning["duration_min"] = (
+        planning["end_dt"] - planning["start_dt"]
+    ).dt.total_seconds() / 60.0
+
+    # Display group logic
+    def _pick_display_group(row):
+        if row["activity"] == "service trip":
+            if "line" in row and pd.notna(row["line"]) and str(row["line"]).strip() != "":
+                try:
+                    line_str = str(int(float(row["line"])))
+                except Exception:
+                    line_str = str(row["line"])
+                return f"service trip line {line_str}"
+            else:
+                return "service trip (unknown line)"
+        else:
+            return row["activity"]
+
+    planning["display_group"] = planning.apply(_pick_display_group, axis=1)
+
+    # Fixed colors for non-line activities
+    base_colors = {
+        "charging": "green",
+        "idle": "gray",
+        "material trip": "orange",
+        "service trip (unknown line)": "blue",
+    }
+
+    # Palette for unique line colors
+    palette_cycle = [
+        "blue", "purple", "red", "brown",
+        "pink", "cyan", "olive", "magenta"
+    ]
+    color_map = dict(base_colors)
+
+    # Add dynamic colors for lines
+    line_groups = [
+        g for g in planning["display_group"].unique()
+        if isinstance(g, str) and g.startswith("service trip line ")
+    ]
+    for idx, g in enumerate(line_groups):
+        color_map[g] = palette_cycle[idx % len(palette_cycle)]
+
+    # Build timeline chart
+    fig = px.timeline(
+        planning,
+        x_start="start_dt",
+        x_end="end_dt",
+        y="bus",
+        color="display_group",
+        color_discrete_map=color_map,
+        hover_data=[
+            "activity",
+            "line",
+            "start_time",
+            "end_time",
+            "duration_min",
+            "start_location",
+            "end_location",
+            "energy_consumption",
+        ],
+    )
+
+    # Flip Y-axis so first bus is on top
+    fig.update_yaxes(autorange="reversed")
+
+    # X-axis HH:MM formatting
+    fig.update_xaxes(tickformat="%H:%M")
+
+    fig.update_layout(
+        title="Bus Planning Gantt Chart",
+        xaxis_title="Time of Day",
+        yaxis_title="Bus",
+        legend_title="Activity / Line",
+        height=600,
+        width=2000,
+    )
+
+    return st.plotly_chart(fig)
+
 
 # -------------------------------------------------
 # Coverage / timing checks

@@ -248,7 +248,7 @@ elif page == "Planning Maker":
                         
                         # Show Gantt Chart
                         st.header("Gantt Chart of Generated Bus Planning")
-                        fm.create_gannt_chart(planning_for_gantt)
+                        fm.create_gannt_chart_2(planning_for_gantt)
                         
                         # Download button
                         st.header("Download Planning")
