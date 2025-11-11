@@ -631,11 +631,35 @@ class BusScheduler:
                         best_bus = bus
             
             if best_bus is None:
+                # Calculate required preparation time for new bus
+                # Need time for: deadhead to ride start (or via charger if needed)
+                deadhead_time = self.distance_matrix.get_travel_time_minutes(
+                    self.garage_location, ride.start_stop)
+                
+                # Check if charging is needed for first ride
+                ride_energy = calculate_energy_consumption(ride.distance_km, self.consumption_per_km)
+                deadhead_energy = self.distance_matrix.get_energy_for_deadhead(
+                    self.garage_location, ride.start_stop, self.consumption_per_km)
+                
+                battery_percent = BusConstants.BATTERY_CAPACITY / BusConstants.BATTERY_CAPACITY  # 100%
+                needs_first_charge = (battery_percent < 0.50) or (BusConstants.BATTERY_CAPACITY < (deadhead_energy + ride_energy + 30))
+                
+                if needs_first_charge:
+                    # Calculate time via charger
+                    time_to_charger = self.distance_matrix.get_travel_time_minutes(
+                        self.garage_location, self.charging_planner.charging_station)
+                    charge_time = 30  # Assume 30 min charging for new bus
+                    time_from_charger = self.distance_matrix.get_travel_time_minutes(
+                        self.charging_planner.charging_station, ride.start_stop)
+                    prep_time = time_to_charger + charge_time + time_from_charger + 10
+                else:
+                    prep_time = deadhead_time + 10  # Just deadhead + 10 min buffer
+                
                 new_bus = Bus(
                     f"BUS_{len(buses)+1}",
                     self.garage_location,
                     BusConstants.BATTERY_CAPACITY,
-                    ride.start_time - timedelta(minutes=120)  # Start 2 hours before first ride for flexibility
+                    ride.start_time - timedelta(minutes=prep_time)
                 )
                 buses.append(new_bus)
                 best_bus = new_bus
@@ -728,10 +752,17 @@ def create_bus_planning(timetable_df: pd.DataFrame,
                             driving_usage, idle_usage)
     
     # Creates initial bus with starting battery level
+    # Calculate smart preparation time based on first ride needs
     start_battery_kwh = BusConstants.BATTERY_CAPACITY * (startbat / 100.0)
+    first_ride = rides[0]
+    
+    # Calculate minimum required preparation time
+    deadhead_time = distance_matrix.get_travel_time_minutes(garage_location, first_ride.start_stop)
+    prep_time = deadhead_time + 10  # Deadhead time + 10 min buffer
+    
     initial_buses = [
         Bus("BUS_1", garage_location, start_battery_kwh, 
-            rides[0].start_time - timedelta(minutes=120))  # Start 2 hours before first ride
+            first_ride.start_time - timedelta(minutes=prep_time))
     ]
     
     # Schedules all rides
