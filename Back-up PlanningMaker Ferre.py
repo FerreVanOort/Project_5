@@ -1,4 +1,4 @@
-## PlanningMaker Ferre - Verbeterde Versie
+## Back-up PlanningMaker Ferre
 
 # Imports
 import pandas as pd
@@ -343,7 +343,7 @@ class BusScheduler:
     
     def can_bus_serve_ride(self, bus: Bus, ride: Ride) -> Tuple[bool, Optional[str]]:
         """Check if bus can serve a ride, including time for charging if needed."""
-        # Calculates if there is need for charging with aggressive trigger
+        # Calculates if there is need for charging
         deadhead_energy = self.distance_matrix.get_energy_for_deadhead(
             bus.current_location, ride.start_stop, self.consumption_per_km)
         ride_energy = calculate_energy_consumption(ride.distance_km, self.consumption_per_km)
@@ -351,12 +351,10 @@ class BusScheduler:
         
         battery_percent = bus.current_battery_kwh / BusConstants.BATTERY_CAPACITY
         safe_energy_needed = total_energy_needed + 15  # 15 kWh buffer
-        
-        # Aggressive charging trigger: charge if battery < 50% OR insufficient for ride + 30 kWh buffer
-        needs_charging = (battery_percent < 0.50) or (bus.current_battery_kwh < (safe_energy_needed + 30))
+        needs_charging = (battery_percent < 0.30) or (bus.current_battery_kwh < safe_energy_needed)
         
         if needs_charging:
-            # Calculates total time needed to reach charger + charging + from charger to ride
+            # Calculates total time needed to charger + charging + from charger to ride
             charger = self.charging_planner.charging_station
             
             # Time to get to charger
@@ -370,9 +368,15 @@ class BusScheduler:
                 time_to_charger = 0
                 battery_at_charger = bus.current_battery_kwh
             
-            # Target charge level: always aim for 90% for maximum autonomy
-            target_charge = BusConstants.BATTERY_CAPACITY * 0.90
-            
+            # Minimum charging time needed
+            energy_needed_after_charging = (
+                self.distance_matrix.get_energy_for_deadhead(charger, ride.start_stop, self.consumption_per_km) +
+                ride_energy + 20
+            )
+            target_charge = min(
+                max(energy_needed_after_charging, BusConstants.BATTERY_CAPACITY * 0.80),
+                BusConstants.BATTERY_CAPACITY
+            )
             min_charge_time = calculate_charging_time(
                 battery_at_charger, target_charge,
                 self.charging_planner.fast_rate, self.charging_planner.slow_rate
@@ -419,26 +423,10 @@ class BusScheduler:
         ride_energy = calculate_energy_consumption(ride.distance_km, self.consumption_per_km)
         total_energy_needed = deadhead_energy + ride_energy
         
+        # Charging trigger: charge if below 10% OR if insufficient for this ride + small buffer
         battery_percent = current_battery / BusConstants.BATTERY_CAPACITY
         safe_energy_needed = total_energy_needed + 15  # 15 kWh buffer
-        
-        # Aggressive charging trigger: charge if battery < 50% OR insufficient for ride + 30 kWh buffer
-        needs_charging = (battery_percent < 0.50) or (current_battery < (safe_energy_needed + 30))
-        
-        # Opportunistic charging: check for long idle periods that can be used for charging
-        available_time = (ride.start_time - current_time).total_seconds() / 60
-        time_to_charger = self.distance_matrix.get_travel_time_minutes(
-            current_location, self.charging_planner.charging_station)
-        time_from_charger = self.distance_matrix.get_travel_time_minutes(
-            self.charging_planner.charging_station, ride.start_stop)
-        
-        # If idle > 30 min AND battery < 70% AND not already at ride start => charge opportunistically
-        potential_charging_time = available_time - time_to_charger - time_from_charger - 10
-        if (not needs_charging and 
-            potential_charging_time > 30 and 
-            battery_percent < 0.70 and
-            current_location != ride.start_stop):
-            needs_charging = True
+        needs_charging = (battery_percent < 0.10) or (current_battery < safe_energy_needed)
         
         # CHARGING if needed
         if needs_charging:
@@ -486,8 +474,14 @@ class BusScheduler:
             available_for_charging = max(BusConstants.MIN_CHARGE_TIME, 
                                         time_available - time_from_charger - 5)
             
-            # Target charge level: always aim for 90% for optimal autonomy
-            target_charge = BusConstants.BATTERY_CAPACITY * 0.90
+            # Determines target charge level - aims for 90% for efficiency
+            energy_after_charging_needed = (
+                self.distance_matrix.get_energy_for_deadhead(charger, ride.start_stop, self.consumption_per_km) +
+                ride_energy + 15  # Small buffer
+            )
+            min_target = energy_after_charging_needed
+            optimal_target = BusConstants.BATTERY_CAPACITY * 0.90
+            target_charge = min(max(min_target, optimal_target), BusConstants.BATTERY_CAPACITY)
             
             charged_to, charge_duration = self.charging_planner.plan_charging_session(
                 Bus(bus.bus_id, charger, battery_at_charger, arrival_at_charger),
@@ -546,7 +540,7 @@ class BusScheduler:
             current_location = ride.start_stop
             current_time = arrival_at_start
         
-        # IDLE period (if any) - only when unavoidable
+        # IDLE period (if any)
         idle_seconds = (ride.start_time - current_time).total_seconds()
         if idle_seconds > 60:  # More than 1 minute
             idle_minutes = idle_seconds / 60
@@ -594,7 +588,7 @@ class BusScheduler:
     
     def schedule_all_rides(self, rides: List[Ride], 
                           initial_buses: List[Bus]) -> List[Assignment]:
-        """Schedule all rides using greedy assignment with improved bus selection."""
+        """Schedule all rides using greedy assignment."""
         sorted_rides = sorted(rides, key=lambda r: r.start_time)
         
         assignments = []
@@ -610,21 +604,7 @@ class BusScheduler:
                 if can_serve:
                     deadhead_dist = self.distance_matrix.get_distance_km(
                         bus.current_location, ride.start_stop)
-                    
-                    # Improved scoring that promotes bus reuse and minimizes idle time
-                    # Lower score = better
-                    time_gap = (ride.start_time - bus.available_from).total_seconds() / 60
-                    
-                    # Reward short gaps (less idle time)
-                    time_penalty = min(time_gap / 30, 3.0)  # Max 3 points for time
-                    
-                    # Reward short deadhead distance
-                    distance_penalty = deadhead_dist * 1.5
-                    
-                    # Slight preference for fuller battery (encourages recharging)
-                    battery_penalty = (1.0 - bus.battery_percent) * 2.0
-                    
-                    score = distance_penalty + time_penalty + battery_penalty
+                    score = deadhead_dist * 2.0 + (1.0 - bus.battery_percent) * 10
                     
                     if score < best_score:
                         best_score = score
@@ -635,7 +615,7 @@ class BusScheduler:
                     f"BUS_{len(buses)+1}",
                     self.garage_location,
                     BusConstants.BATTERY_CAPACITY,
-                    ride.start_time - timedelta(minutes=120)  # Start 2 hours before first ride for flexibility
+                    ride.start_time - timedelta(minutes=5)  # Start 5 min before first ride
                 )
                 buses.append(new_bus)
                 best_bus = new_bus
@@ -649,11 +629,10 @@ class BusScheduler:
             best_bus.current_battery_kwh = assignment.battery_after_ride
             best_bus.available_from = ride.end_time
             
-            # Less aggressive emergency recharge threshold
-            if best_bus.current_battery_kwh < BusConstants.BATTERY_CAPACITY * 0.10:
+            if best_bus.current_battery_kwh < BusConstants.BATTERY_CAPACITY * 0.15:
                 best_bus.current_battery_kwh = max(
                     best_bus.current_battery_kwh,
-                    BusConstants.BATTERY_CAPACITY * 0.10
+                    BusConstants.BATTERY_CAPACITY * 0.15
                 )
         
         return assignments
@@ -731,7 +710,7 @@ def create_bus_planning(timetable_df: pd.DataFrame,
     start_battery_kwh = BusConstants.BATTERY_CAPACITY * (startbat / 100.0)
     initial_buses = [
         Bus("BUS_1", garage_location, start_battery_kwh, 
-            rides[0].start_time - timedelta(minutes=120))  # Start 2 hours before first ride
+            rides[0].start_time - timedelta(minutes=5))  # Start 5 min before first ride
     ]
     
     # Schedules all rides
