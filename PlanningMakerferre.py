@@ -1,35 +1,29 @@
-"""
-PlanningMakerferre.py
-====================
-Bus Planning Maker met volledige event tracking (rides, charging, deadhead, idle)
-Voor gebruik in Streamlit applicatie
-"""
+## PlanningMaker Ferre
 
+# Imports
 import pandas as pd
 import numpy as np
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
-# ============================================================================
-# Data Structures
-# ============================================================================
 
+# Data Structures
 @dataclass
 class BusConstants:
     """Constants for bus specifications"""
-    ORIGINAL_BATTERY_CAPACITY = 300  # kWh (maximum capacity when new)
-    AGING_FACTOR = 0.90  # 90% SOH = 90% of original capacity
-    BATTERY_CAPACITY = ORIGINAL_BATTERY_CAPACITY * AGING_FACTOR  # 270 kWh actual usable
+    ORIGINAL_BATTERY_CAPACITY = 300  # kWh
+    AGING_FACTOR = 0.90  # SOH percentage
+    BATTERY_CAPACITY = ORIGINAL_BATTERY_CAPACITY * AGING_FACTOR  # Actual capacity of battery in kWh
     
     CONSUMPTION_PER_KM = 1.2  # kW/km
     IDLE_CONSUMPTION_PER_HOUR = 5  # kWh per hour
     
-    MIN_BATTERY_PERCENT = 0.10  # 10% minimum (27 kWh with 90% SOH)
-    MIN_CHARGE_TIME = 15  # minutes
+    MIN_BATTERY_PERCENT = 0.10  # 10% minimum battery
+    MIN_CHARGE_TIME = 15  # in minutes
     
-    FAST_CHARGE_RATE = 450  # kWh per hour until 90%
-    SLOW_CHARGE_RATE = 60   # kWh per hour after 90%
+    FAST_CHARGE_RATE = 450  # kWh per hour until 90% charge
+    SLOW_CHARGE_RATE = 60   # kWh per hour after 90% charge
     FAST_CHARGE_THRESHOLD = 0.90  # Switch to slow charging at 90% of current capacity
 
 
@@ -115,10 +109,7 @@ class Assignment:
         return ride_event.battery_after if ride_event else 0
 
 
-# ============================================================================
 # Battery Calculation Functions
-# ============================================================================
-
 def calculate_energy_consumption(distance_km: float, consumption_per_km: float = None) -> float:
     """Calculate energy consumption for a given distance."""
     if consumption_per_km is None:
@@ -148,13 +139,13 @@ def calculate_charging_time(current_kwh: float, target_kwh: float,
     threshold_kwh = BusConstants.BATTERY_CAPACITY * BusConstants.FAST_CHARGE_THRESHOLD
     total_minutes = 0
     
-    # Phase 1: Fast charging up to 90%
+    # Fast charging up to 90%
     if current_kwh < threshold_kwh:
         fast_charge_amount = min(target_kwh, threshold_kwh) - current_kwh
         fast_charge_hours = fast_charge_amount / fast_rate
         total_minutes += fast_charge_hours * 60
     
-    # Phase 2: Slow charging above 90%
+    # Slow charging above 90%
     if target_kwh > threshold_kwh and current_kwh < target_kwh:
         slow_charge_start = max(current_kwh, threshold_kwh)
         slow_charge_amount = target_kwh - slow_charge_start
@@ -164,10 +155,7 @@ def calculate_charging_time(current_kwh: float, target_kwh: float,
     return max(total_minutes, BusConstants.MIN_CHARGE_TIME)
 
 
-# ============================================================================
 # Data Loading
-# ============================================================================
-
 class DataLoader:
     """Loads data from DataFrames"""
     
@@ -265,10 +253,7 @@ class DataLoader:
         return distance_dict, time_dict, df
 
 
-# ============================================================================
 # Distance Matrix
-# ============================================================================
-
 class DistanceMatrix:
     """Handles distance and travel time lookups between stops"""
     
@@ -298,10 +283,7 @@ class DistanceMatrix:
         return calculate_energy_consumption(distance_km, consumption_per_km)
 
 
-# ============================================================================
 # Charging Planner
-# ============================================================================
-
 class ChargingPlanner:
     """Manages charging decisions and calculations"""
     
@@ -344,10 +326,7 @@ class ChargingPlanner:
         return min(current + slow_charge, BusConstants.BATTERY_CAPACITY)
 
 
-# ============================================================================
 # Bus Scheduler
-# ============================================================================
-
 class BusScheduler:
     """Main scheduler for assigning rides to buses"""
     
@@ -364,7 +343,7 @@ class BusScheduler:
     
     def can_bus_serve_ride(self, bus: Bus, ride: Ride) -> Tuple[bool, Optional[str]]:
         """Check if bus can serve a ride, including time for charging if needed."""
-        # Calculate if we need charging
+        # Calculates if there is need for charging
         deadhead_energy = self.distance_matrix.get_energy_for_deadhead(
             bus.current_location, ride.start_stop, self.consumption_per_km)
         ride_energy = calculate_energy_consumption(ride.distance_km, self.consumption_per_km)
@@ -375,7 +354,7 @@ class BusScheduler:
         needs_charging = (battery_percent < 0.30) or (bus.current_battery_kwh < safe_energy_needed)
         
         if needs_charging:
-            # Calculate total time needed: to charger + charging + from charger to ride
+            # Calculates total time needed to charger + charging + from charger to ride
             charger = self.charging_planner.charging_station
             
             # Time to get to charger
@@ -424,7 +403,7 @@ class BusScheduler:
             if arrival_time > ride.start_time:
                 return False, "Cannot arrive in time"
             
-            # Check if battery is sufficient
+            # Checks if battery is sufficient
             if bus.current_battery_kwh >= (deadhead_energy + ride_energy):
                 return True, None
             else:
@@ -438,16 +417,16 @@ class BusScheduler:
         current_battery = bus.current_battery_kwh
         current_location = bus.current_location
         
-        # Calculate energy needs
+        # Calculates energy needs
         deadhead_energy = self.distance_matrix.get_energy_for_deadhead(
             current_location, ride.start_stop, self.consumption_per_km)
         ride_energy = calculate_energy_consumption(ride.distance_km, self.consumption_per_km)
         total_energy_needed = deadhead_energy + ride_energy
         
-        # Charging trigger: charge if below 30% OR if insufficient for this ride + small buffer
+        # Charging trigger: charge if below 10% OR if insufficient for this ride + small buffer
         battery_percent = current_battery / BusConstants.BATTERY_CAPACITY
-        safe_energy_needed = total_energy_needed + 15  # Just 15 kWh buffer (not 30%)
-        needs_charging = (battery_percent < 0.30) or (current_battery < safe_energy_needed)
+        safe_energy_needed = total_energy_needed + 15  # 15 kWh buffer
+        needs_charging = (battery_percent < 0.10) or (current_battery < safe_energy_needed)
         
         # CHARGING if needed
         if needs_charging:
