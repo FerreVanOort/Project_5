@@ -615,7 +615,7 @@ class BusScheduler:
                     f"BUS_{len(buses)+1}",
                     self.garage_location,
                     BusConstants.BATTERY_CAPACITY,
-                    ride.start_time - timedelta(minutes=2)  # Start 2 min before first ride
+                    ride.start_time - timedelta(minutes=5)  # Start 5 min before first ride
                 )
                 buses.append(new_bus)
                 best_bus = new_bus
@@ -710,7 +710,7 @@ def create_bus_planning(timetable_df: pd.DataFrame,
     start_battery_kwh = BusConstants.BATTERY_CAPACITY * (startbat / 100.0)
     initial_buses = [
         Bus("BUS_1", garage_location, start_battery_kwh, 
-            rides[0].start_time - timedelta(minutes=2))  # Start 2 min before first ride
+            rides[0].start_time - timedelta(minutes=5))  # Start 5 min before first ride
     ]
     
     # Schedules all rides
