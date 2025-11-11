@@ -474,13 +474,13 @@ class BusScheduler:
             available_for_charging = max(BusConstants.MIN_CHARGE_TIME, 
                                         time_available - time_from_charger - 5)
             
-            # Determines target charge level - aims for 70-80% for efficiency
+            # Determines target charge level - aims for 90% for efficiency
             energy_after_charging_needed = (
                 self.distance_matrix.get_energy_for_deadhead(charger, ride.start_stop, self.consumption_per_km) +
                 ride_energy + 15  # Small buffer
             )
             min_target = energy_after_charging_needed
-            optimal_target = BusConstants.BATTERY_CAPACITY * 0.90  # Aim for 75%
+            optimal_target = BusConstants.BATTERY_CAPACITY * 0.90
             target_charge = min(max(min_target, optimal_target), BusConstants.BATTERY_CAPACITY)
             
             charged_to, charge_duration = self.charging_planner.plan_charging_session(
@@ -615,7 +615,7 @@ class BusScheduler:
                     f"BUS_{len(buses)+1}",
                     self.garage_location,
                     BusConstants.BATTERY_CAPACITY,
-                    ride.start_time - timedelta(minutes=30)  # Start 30 min before first ride
+                    ride.start_time - timedelta(minutes=2)  # Start 2 min before first ride
                 )
                 buses.append(new_bus)
                 best_bus = new_bus
