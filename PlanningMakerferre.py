@@ -638,10 +638,7 @@ class BusScheduler:
         return assignments
 
 
-# ============================================================================
 # Export Functions
-# ============================================================================
-
 def assignments_to_dataframe(assignments: List[Assignment]) -> pd.DataFrame:
     """Convert assignments to DataFrame for export or display."""
     all_events = []
@@ -661,10 +658,7 @@ def assignments_to_dataframe(assignments: List[Assignment]) -> pd.DataFrame:
     return pd.DataFrame(all_events)
 
 
-# ============================================================================
 # Main Planning Function
-# ============================================================================
-
 def create_bus_planning(timetable_df: pd.DataFrame,
                        distance_matrix_df: pd.DataFrame,
                        charging_station: str = "DEPOT",
@@ -677,7 +671,7 @@ def create_bus_planning(timetable_df: pd.DataFrame,
     """
     Main function to create bus planning from timetable and distance matrix.
     
-    Args:
+    Input:
         timetable_df: DataFrame with columns: start, departure_time, end, line
         distance_matrix_df: DataFrame with columns: start, end, min_travel_time, max_travel_time, distance_m, line
         charging_station: Name of charging station location
@@ -688,7 +682,7 @@ def create_bus_planning(timetable_df: pd.DataFrame,
         soh: State of Health (percentage)
         startbat: Starting battery percentage
     
-    Returns:
+    Output:
         DataFrame with complete planning including all events
     """
     # Update constants based on parameters
@@ -706,23 +700,23 @@ def create_bus_planning(timetable_df: pd.DataFrame,
     if not rides:
         raise ValueError("No rides loaded from timetable!")
     
-    # Create planning objects
+    # Creates planning objects
     distance_matrix = DistanceMatrix(distance_dict, time_dict)
     charging_planner = ChargingPlanner(charging_station, charging_speed, 60)
     scheduler = BusScheduler(distance_matrix, charging_planner, garage_location, 
                             driving_usage, idle_usage)
     
-    # Create initial bus with starting battery level
+    # Creates initial bus with starting battery level
     start_battery_kwh = BusConstants.BATTERY_CAPACITY * (startbat / 100.0)
     initial_buses = [
         Bus("BUS_1", garage_location, start_battery_kwh, 
-            rides[0].start_time - timedelta(minutes=30))  # Start 30 min before first ride
+            rides[0].start_time - timedelta(minutes=2))  # Start 2 min before first ride
     ]
     
-    # Schedule all rides
+    # Schedules all rides
     assignments = scheduler.schedule_all_rides(rides, initial_buses)
     
-    # Convert to DataFrame
+    # Converts to DataFrame
     planning_df = assignments_to_dataframe(assignments)
     
     return planning_df
