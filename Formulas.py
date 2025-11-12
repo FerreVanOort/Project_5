@@ -6,11 +6,47 @@ import numpy as np
 import streamlit as st
 from datetime import time, datetime, timedelta
 import plotly.express as px
-
-
+import re
 # -------------------------------------------------
 # Cleaning & preprocessing
 # -------------------------------------------------
+
+
+def _parse_time_flexible(x) -> time:
+    """Accepteert HH:MM, HH:MM:SS, HH:MM:SS.ssssss, Timestamp, of Excel-float."""
+    if isinstance(x, time):
+        return x
+    if isinstance(x, datetime):
+        return x.time()
+    if pd.isna(x):
+        raise ValueError("Null time value found")
+
+    s = str(x).strip().replace(",", ".")  # 08:15:23,687 -> 08:15:23.687
+
+    # Probeer vaste formaten
+    for fmt in ("%H:%M:%S.%f", "%H:%M:%S", "%H:%M"):
+        try:
+            return datetime.strptime(s, fmt).time()
+        except ValueError:
+            pass
+
+    # Probeer pandas' flexibele parser
+    try:
+        return pd.to_datetime(s, format="mixed").time()
+    except Exception:
+        pass
+
+    # Excel time als fractie van een dag (bv. 0.5 = 12:00)
+    try:
+        val = float(s)
+        total_seconds = int(round(val * 24 * 3600))
+        base = datetime(1900, 1, 1)  # willekeurige datum
+        return (base + timedelta(seconds=total_seconds)).time()
+    except Exception:
+        pass
+
+    raise ValueError(f"Time format not recognized: {x}")
+
 
 def cleanup_excel(planning: pd.DataFrame) -> pd.DataFrame:
     """
@@ -120,8 +156,15 @@ def length_activities(planning: pd.DataFrame,
     """
     planning = planning.copy()
 
-    start_dt = pd.to_datetime(planning[start_col], format="%H:%M:%S")
-    end_dt = pd.to_datetime(planning[end_col], format="%H:%M:%S")
+    start_dt = pd.to_datetime(
+        pd.Series(planning[start_col]).astype(str).str.replace(",", ".", regex=False),
+        format="mixed"
+    )
+    end_dt = pd.to_datetime(
+        pd.Series(planning[end_col]).astype(str).str.replace(",", ".", regex=False),
+        format="mixed"
+    )
+
 
     # If end is "earlier" than start, assume it ends next day
     end_dt = end_dt.where(end_dt >= start_dt, end_dt + pd.Timedelta(days=1))
@@ -166,42 +209,16 @@ def charge_time(planning: pd.DataFrame):
 
 
 def convert_to_time(value):
-    """
-    Guarantees that a time value is a datetime.time object.
-    Accepts '08:30', '08:30:00', or already a datetime.time.
-    
-    Input:
-        Any value
-        
-    Output:
-        Error if time format is not recognized
-    """
-    if isinstance(value, time):
-        return value
-
-    if pd.isnull(value):
-        raise ValueError("Null time value found")
-
-    for fmt in ("%H:%M", "%H:%M:%S"):
-        try:
-            return pd.to_datetime(value, format=fmt).time()
-        except (ValueError, TypeError):
-            continue
-
-    raise ValueError(f"Time format not recognized: {value}")
-
+    """Compatibele wrapper (voor bestaande aanroepen)."""
+    return _parse_time_flexible(value)
 
 def ensure_time_column(df: pd.DataFrame, column: str):
     """
-    Convert a whole column to datetime.time using convert_to_time.
-    
-    Input:
-        Bus planning as a Pandas DataFrame
-        
-    Output:
-        Bus planning with applied convert_to_time function
+    Converteer volledige kolom naar datetime.time met een tolerante parser.
+    Laat strings eerst een komma->punt vervanging krijgen.
     """
-    df[column] = df[column].apply(convert_to_time)
+    # Snelle pad: als kolom al time of Timestamp bevat, werkt apply ook prima.
+    df[column] = df[column].apply(_parse_time_flexible)
 
 
 def fill_idle_periods(planning: pd.DataFrame, base_day: datetime = None) -> pd.DataFrame:
@@ -222,8 +239,15 @@ def fill_idle_periods(planning: pd.DataFrame, base_day: datetime = None) -> pd.D
         base_day = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
 
     # Make sure start_time / end_time are datetime.time
-    planning["start_time"] = pd.to_datetime(planning["start_time"], format="%H:%M:%S").dt.time
-    planning["end_time"] = pd.to_datetime(planning["end_time"], format="%H:%M:%S").dt.time
+    planning["start_time"] = pd.to_datetime(
+        planning["start_time"].astype(str).str.replace(",", ".", regex=False),
+        format="mixed"
+    ).dt.time
+    planning["end_time"] = pd.to_datetime(
+        planning["end_time"].astype(str).str.replace(",", ".", regex=False),
+        format="mixed"
+    ).dt.time
+
 
     # Attach dummy date
     planning["start_dt"] = planning["start_time"].apply(lambda t: datetime.combine(base_day.date(), t))
@@ -421,7 +445,11 @@ def create_gannt_chart_2(planning: pd.DataFrame, base_day: datetime = None):
     def _to_time(value):
         if isinstance(value, pd.Timestamp):
             return value.time()
-        return value
+        try:
+            return _parse_time_flexible(value)
+        except Exception:
+            return value  # laatste redmiddel; plotly kan soms strings aan
+
 
     planning["start_dt"] = planning.apply(
         lambda r: datetime.combine(base_day.date(), _to_time(r["start_time"])),
@@ -703,8 +731,14 @@ def SOC_check(planning: pd.DataFrame, SOH, minbat, startbat):
     df = planning.copy()
 
     # Ensure times are datetime.time
-    df["start_time"] = pd.to_datetime(df["start_time"], format="%H:%M:%S").dt.time
-    df["end_time"]   = pd.to_datetime(df["end_time"],   format="%H:%M:%S").dt.time
+    df["start_time"] = pd.to_datetime(
+        df["start_time"].astype(str).str.replace(",", ".", regex=False),
+        format="mixed"
+    ).dt.time
+    df["end_time"] = pd.to_datetime(
+        df["end_time"].astype(str).str.replace(",", ".", regex=False),
+        format="mixed"
+    ).dt.time
 
     # Helper for "shift after midnight"
     base_day = datetime.today().replace(hour=0, minute=0, second=0, microsecond=0)
